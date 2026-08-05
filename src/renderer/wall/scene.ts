@@ -75,7 +75,9 @@ export class WallScene {
 
   private glowTex!: THREE.Texture
   private bgGroup = new THREE.Group()
-  private stars!: THREE.Points
+  private starMats: THREE.PointsMaterial[] = []
+  private nebulae: { mat: THREE.SpriteMaterial; base: number }[] = []
+  private bgFade = 1
   private strokeGroup = new THREE.Group()
   private stackGroup = new THREE.Group()
   private grid!: THREE.GridHelper
@@ -232,51 +234,83 @@ export class WallScene {
       anyC.geometry?.dispose()
       anyC.material?.dispose()
     }
+    this.nebulae = []
 
-    const { dist, halfW, ptK } = this.f
+    const { dist, halfW } = this.f
     const tanH = halfW / dist
     const tanV = HALF_H / dist
     const density = Math.max(0.25, this.state.look.starDensity / 100)
-    // 1300 sao là mật độ đẹp trên khung 16:9; nhân theo bề ngang thực tế.
     const N = Math.min(24000, Math.round(1300 * (halfW / (HALF_H * 16 / 9)) * density))
 
-    const pos = new Float32Array(N * 3)
-    const col = new Float32Array(N * 3)
+    // BA LỚP khác cỡ. Vì đã tắt sizeAttenuation nên mọi sao cùng cỡ pixel, nền
+    // sẽ phẳng như nhiễu hạt; chia lớp lấy lại chiều sâu mà vẫn phủ đều.
+    // Cỡ sao tính theo PIXEL nên phải nhân theo chiều cao khung render thật, nếu
+    // không thì cửa sổ xem trước nhỏ sẽ hiện sao to gấp mấy lần tường thật và
+    // mình tự đánh lừa mình khi ngắm. Mốc là tường 1080 pixel chiều cao.
+    const hPx = Math.max(120, this.renderer.domElement.height)
+    const sizeK = hPx / 1080
+    const LAYERS = [
+      // dim chọn sao cho độ sáng mỗi sao rơi đúng dải 0.25–0.75 của bản gốc,
+      // không phải áng chừng bằng mắt trên ảnh đã thu nhỏ.
+      { frac: 0.62, size: 1.8, dim: 0.85 },
+      { frac: 0.29, size: 2.8, dim: 0.95 },
+      { frac: 0.09, size: 4.0, dim: 1.0 }
+    ]
     const palette = [new THREE.Color(0x8b5cf6), new THREE.Color(0xc4b5fd), new THREE.Color(0xffffff), new THREE.Color(0x6d8bfa)]
-    const zNear = -dist * 2.6
-    const zFar = dist * 0.5
-    for (let i = 0; i < N; i++) {
-      const z = zNear + Math.random() * (zFar - zNear)
-      const d = dist - z // khoảng cách tới camera
-      pos[i * 3] = (Math.random() * 2 - 1) * d * tanH * 1.15
-      pos[i * 3 + 1] = (Math.random() * 2 - 1) * d * tanV * 1.25
-      pos[i * 3 + 2] = z
-      const c = palette[(Math.random() * palette.length) | 0].clone().multiplyScalar(0.25 + Math.random() * 0.5)
-      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b
+    const zSpan = dist * 0.25
+    this.starMats = []
+    for (const L of LAYERS) {
+      const n = Math.max(1, Math.round(N * L.frac))
+      const pos = new Float32Array(n * 3)
+      const col = new Float32Array(n * 3)
+      for (let i = 0; i < n; i++) {
+        // Sinh toạ độ TRONG KHÔNG GIAN MÀN HÌNH rồi chiếu ngược ra thế giới.
+        // Rải thẳng trong hộp thế giới thì ở z xa khung hình rộng hơn nên hai
+        // đầu tường bị hụt sao.
+        const z = -zSpan * Math.random()
+        const d = dist - z
+        pos[i * 3] = (Math.random() * 2 - 1) * d * tanH * 1.02
+        pos[i * 3 + 1] = (Math.random() * 2 - 1) * d * tanV * 1.06
+        pos[i * 3 + 2] = z
+        const c = palette[(Math.random() * palette.length) | 0].clone()
+          .multiplyScalar((0.3 + Math.random() * 0.55) * L.dim)
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b
+      }
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
+      // sizeAttenuation TẮT: trường rộng 125 đơn vị nên góc màn hình xa camera
+      // gấp 1.55 lần tâm — bật attenuation thì sao ở hai đầu tường tự nhỏ và tối
+      // đi, ra đúng vệt sáng hình thấu kính. Tắt đi thì phủ đều tuyệt đối.
+      const mat = new THREE.PointsMaterial({
+        size: L.size * sizeK, sizeAttenuation: false, vertexColors: true,
+        map: this.glowTex, // không có map thì GL point ra hình VUÔNG, thấy rõ khi sao to
+        transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false
+      })
+      const pts = new THREE.Points(geo, mat)
+      pts.frustumCulled = false
+      this.bgGroup.add(pts)
+      this.starMats.push(mat)
     }
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
-    this.stars = new THREE.Points(
-      geo,
-      new THREE.PointsMaterial({ size: 0.22 * ptK, vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })
-    )
-    this.bgGroup.add(this.stars)
 
-    // Quầng tinh vân — rải dọc bề ngang, không dồn cục ở giữa.
+    // Quầng tinh vân. Cỡ phải tính theo PHẦN CHIỀU CAO MÀN HÌNH nó chiếm, chứ
+    // không phải một hằng số thế giới: bản trước nhân sai, ra sprite to gấp 4.3
+    // lần chiều cao khung — chính là quầng tím khổng lồ nuốt hết nền.
     const nebCols = [0x4c1d95, 0x1e2a6e, 0x6d28d9, 0x312e81, 0x86198f, 0x155e75]
-    const nebCount = Math.max(6, Math.round(6 * (halfW / 12) * 0.35))
+    const nebCount = Math.max(4, Math.round(halfW / 9))
     for (let i = 0; i < nebCount; i++) {
-      const c = nebCols[i % nebCols.length]
-      const z = -dist * (0.6 + Math.random() * 1.4)
+      const z = -dist * (0.3 + Math.random() * 0.5)
       const d = dist - z
-      const neb = this.makeSprite(c, (30 + Math.random() * 34) * (d / 60), 0.05 + Math.random() * 0.05)
+      const frac = 0.35 + Math.random() * 0.5 // phần chiều cao khung mà quầng chiếm
+      const base = 0.035 + Math.random() * 0.04
+      const neb = this.makeSprite(nebCols[i % nebCols.length], frac * 2 * d * tanV, base)
       neb.position.set(
-        (Math.random() * 2 - 1) * d * tanH * 0.95,
-        (Math.random() * 2 - 1) * d * tanV * 0.9,
+        (Math.random() * 2 - 1) * d * tanH * 0.92,
+        (Math.random() * 2 - 1) * d * tanV * 0.55,
         z
       )
       this.bgGroup.add(neb)
+      this.nebulae.push({ mat: neb.material as THREE.SpriteMaterial, base })
     }
   }
 
@@ -739,8 +773,17 @@ export class WallScene {
     const stage = this.state.stage
     if (this.state.input.source !== 'mouse') this.applyHand()
 
-    this.bgGroup.rotation.y += dt * 0.0015
-    this.bgGroup.rotation.z += dt * 0.0006
+    // KHÔNG xoay bgGroup. Trường sao rộng ±62 đơn vị mà xoay quanh Z thì sau ~3
+    // phút hai đầu bị nâng quá nửa chiều cao khung (6.5) và trôi hẳn ra ngoài —
+    // đó là lý do nền không phủ liền. Chuyển động đã có sẵn từ camera drift.
+
+    // 0D — "no size, no space": nền phải lùi hẳn để trên tường chỉ còn ĐÚNG MỘT
+    // CHẤM, đúng như concept. Từ 1D trở đi nền quay lại đầy đủ.
+    // 0 tuyệt đối, không phải "mờ đi": concept nói "no size, no space… before
+    // anything exists" — có sao là đã có không gian rồi. 1D mới mở ra trường sao.
+    this.bgFade += ((stage === 0 ? 0 : 1) - this.bgFade) * 0.05
+    for (const m of this.starMats) m.opacity = 0.9 * this.bgFade
+    for (const n of this.nebulae) n.mat.opacity = n.base * Math.max(0, (this.bgFade - 0.25) / 0.75)
 
     const gridMat = this.grid.material as THREE.Material & { opacity: number }
     gridMat.opacity += ((stage === 2 ? 0.14 : 0) - gridMat.opacity) * 0.05

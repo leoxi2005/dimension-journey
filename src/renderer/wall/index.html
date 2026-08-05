@@ -19,11 +19,12 @@
       }
       #stage { position: fixed; inset: 0; }
       canvas#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-      /* Vệt tối hai đầu tường — giấu chỗ ánh sáng máy chiếu yếu đi ở rìa. */
-      #vignette {
-        position: absolute; inset: 0; pointer-events: none;
-        background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(5,3,12,0.55) 100%);
-      }
+      /* ĐÃ BỎ vignette. Bản prototype 16:9 có một lớp radial-gradient tối góc.
+         Trên khung 9.58:1 thì hình ellipse đó bắt đầu tối từ 55% bán kính, tức
+         ăn mất gần nửa chiều dài mỗi bên, hạ hai đầu tường xuống còn 44% độ sáng
+         so với giữa — chính là hiện tượng "nền không phủ liền". Máy chiếu cần
+         phủ đều từ mép này sang mép kia; việc làm mềm rìa là của Resolume
+         (edge blend / mask), không phải của scene. */
       #hud {
         position: absolute; top: 0; left: 0;
         transform-origin: top left;
@@ -68,7 +69,6 @@
   <body>
     <div id="stage">
       <canvas id="gl"></canvas>
-      <div id="vignette"></div>
       <div id="hud">
         <div id="hudTop">
           <div id="stageKey">0D</div>
