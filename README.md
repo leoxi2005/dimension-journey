@@ -2,7 +2,7 @@
 
 App desktop cho phần tương tác Day 3 — Bali projection mapping.
 Tường **10350 × 1080**, ra **Spout** (chính) và **NDI** (dự phòng) cho **Resolume Arena**.
-Tương tác bằng bàn tay: chụm ngón để vẽ, nắm đấm giữ 1s để chuyển chiều, xoè bàn tay để xoay trường 5D.
+Tương tác bằng bàn tay: chụm ngón để vẽ, nắm đấm giữ 4s để chuyển chiều, xoè bàn tay để xoay trường 5D.
 
 Nội dung, màu, âm thanh, sáu chiều — giữ nguyên bản prototype
 `Dimension Journey 0D-5D (standalone).html`. Cái đổi là: thành app thật, phóng lên cỡ tường,
@@ -64,10 +64,10 @@ tiếng ở đó thì sẽ có 2–3 bản MediaPipe ăn CPU và mỗi nốt nh�
 | **Kinect v2** | Kinect v2 **không có driver UVC** — không `getUserMedia` nào thấy nó, nên dù chỉ dùng như webcam thường vẫn phải chạy `KinectBridge.exe`. Bridge gửi được **ảnh màu** (phòng đủ sáng, chính xác nhất) hoặc **ảnh hồng ngoại** (phòng tối om). Xem [kinect-bridge/README.md](kinect-bridge/README.md). |
 | **Chuột** | Test, và là đường cứu hộ nếu camera chết giữa show. |
 
-Với 1 người ở 1–2 m thì **MediaPipe là phương án tối ưu**, không phải body tracking
-của Kinect: hand state của Kinect chỉ có `open`/`closed`/`lasso`, quá thô để phân biệt
-chụm ngón với nắm tay — mà đó lại là hai cử chỉ khác nhau trong tác phẩm này.
-Kinect đáng giá ở **ảnh hồng ngoại**, không phải ở skeleton.
+Dù chọn nguồn nào thì bộ nhận cử chỉ vẫn luôn là **MediaPipe**, không phải body
+tracking của Kinect: hand state của Kinect chỉ có `open`/`closed`/`lasso`, quá thô để
+phân biệt chụm ngón với nắm tay — mà đó lại là hai cử chỉ khác nhau trong tác phẩm này.
+Kinect chỉ đóng vai **nguồn hình**.
 
 ---
 
@@ -98,6 +98,9 @@ là scene phải render thêm một lần nữa. Control có cảnh báo sẵn k
 |---|---|
 | **Tầm với** | 100% = quét tay đi hết 10 m tường. Hạ nếu nét giật ở hai đầu. |
 | **Ngưỡng chụm** | Chụm khó ăn → tăng. Tự vẽ khi chưa chụm → giảm. |
+| **Giữ nắm đấm** | Số giây giữ nắm đấm để sang chiều kế tiếp. Mặc định 4 s. |
+| **Lật gương** | Vẽ vòng tròn thấy nét chạy ngược chiều tay → bấm nút này. Phụ thuộc chỗ đặt camera. |
+| **Mượt** | Tần số cắt của bộ lọc One Euro. Nét rung → tăng; nét đuổi không kịp → giảm. |
 | **Dày nét** | Nét mảnh trên tường 10 m gần như mất. 1.8–2.5× là mức đọc được từ xa. |
 | **Góc nhìn ngang** | Càng lớn trường càng rộng, rìa tường càng méo. 100° là mức cân bằng. |
 | **Chữ HUD + cỡ** | Chữ 0D/1D/… scale theo tường, tắt được nếu chỉ muốn visual. |
