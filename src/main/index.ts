@@ -169,6 +169,12 @@ if (!app.requestSingleInstanceLock()) {
       broadcast()
     }
 
+    // Tiện lúc dev/demo: DJ_OPEN_WALL=1 thì mở sẵn cửa sổ chiếu, khỏi phải bấm.
+    // Mặc định vẫn ĐÓNG, vì ở venue cửa sổ này bật lên là scene render 2 lần.
+    if (process.env.DJ_OPEN_WALL) {
+      state = reduce(state, { type: 'setOutput', key: 'wall', patch: { open: true } })
+    }
+
     wireIpc()
     wm.createControl()
     applyServices()
