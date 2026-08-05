@@ -1,20 +1,21 @@
 // ============================================================================
-// KinectBridge — đọc Kinect v2 rồi đẩy sang app DIMENSION JOURNEY qua WebSocket.
+// KinectBridge — đọc Kinect v2 rồi đẩy hình sang app DIMENSION JOURNEY qua WebSocket.
 //
-// VÌ SAO CẦN: Kinect v2 không hiện ra như webcam UVC, bắt buộc đi qua Kinect SDK
-// 2.0 (COM/.NET, chỉ Windows). Nhét SDK đó vào Electron bằng native addon là
-// đường dài và dễ vỡ; tách ra một tiến trình nhỏ thì đơn giản và tự khởi động
-// lại được nếu chết.
+// VÌ SAO CẦN: Kinect v2 KHÔNG có driver UVC — không một `getUserMedia` nào thấy
+// nó. Muốn lấy hình bắt buộc phải qua Kinect SDK 2.0 (COM/.NET, chỉ Windows).
+// Nhét SDK đó vào Electron bằng native addon là đường dài và dễ vỡ; tách ra một
+// tiến trình nhỏ thì đơn giản, và bridge chết vẫn khởi động lại được giữa show.
 //
-// GỬI CÁI GÌ: ảnh HỒNG NGOẠI 512×424 + hand state của body tracking.
-// Mặc định gửi NHỊ PHÂN THÔ ('DJIR' + w + h + byte xám): không nén, không base64.
-// Trên localhost chỉ 6.5MB/s, rẻ hơn nhiều so với nén JPEG một đầu rồi giải nén
-// đầu kia — mà độ trễ mới là thứ đắt nhất trong chuỗi tương tác này. Dùng --jpeg
-// nếu cần gửi qua mạng thật.
-// Ảnh IR mới là thứ đáng giá: phòng chiếu tối om thì webcam RGB mù hoàn toàn,
-// còn Kinect tự rọi hồng ngoại nên vẫn thấy rõ bàn tay. App chạy MediaPipe
-// HandLandmarker TRÊN ảnh IR đó — vẫn có đủ 21 điểm để bắt cử chỉ chụm ngón,
-// thứ mà hand state thô của Kinect (open/closed/lasso) không làm nổi.
+// HAI NGUỒN HÌNH, chọn bằng --source:
+//   color (mặc định) — camera màu 1920×1080, giảm mẫu còn 640×360.
+//                      Dùng khi phòng còn đủ sáng. MediaPipe được huấn luyện
+//                      trên ảnh màu nên đây là đường chính xác nhất.
+//   ir              — camera hồng ngoại 512×424. Kinect tự rọi IR nên thấy tay
+//                      kể cả tối om, nhưng MediaPipe chạy trên ảnh xám IR thì
+//                      độ chính xác giảm (mô hình không được huấn luyện cho nó).
+//
+// Ảnh gửi đi dạng NHỊ PHÂN THÔ, không nén, không base64: cùng một máy thì băng
+// thông không hề thiếu, mà độ trễ mới là thứ đắt nhất trong chuỗi tương tác này.
 // ============================================================================
 using System;
 using System.Drawing;
@@ -41,15 +42,20 @@ namespace KinectBridge
         private static KinectSensor _sensor;
         private static MultiSourceFrameReader _reader;
         private static ClientWebSocket _ws;
+
         private static string _url = "ws://127.0.0.1:9010";
-        private static long _jpegQuality = 70;
+        private static string _source = "color";   // color | ir
+        private static int _step = 3;              // giảm mẫu ảnh màu: 1920/3 = 640
+        private static float _gain = 1.0f;         // phơi sáng IR
         private static bool _useJpeg;
-        private static float _gain = 1.0f;   // chỉnh phơi sáng IR: tay quá trắng thì hạ
-        private static int _sendEvery = 1;         // 1 = mọi frame (30fps), 2 = 15fps
+        private static long _jpegQuality = 70;
+        private static int _sendEvery = 1;
+
         private static int _frameIndex;
         private static volatile bool _sending;     // không cho >1 frame bay cùng lúc
-        private static byte[] _pixels;
-        private static byte[] _frame;
+        private static byte[] _gray;               // đệm ảnh xám (IR)
+        private static byte[] _bgra;               // đệm ảnh màu thô
+        private static byte[] _frame;              // đệm gói gửi đi
         private static string _handJson = "null";
 
         private static async Task Main(string[] args)
@@ -57,11 +63,14 @@ namespace KinectBridge
             foreach (var a in args)
             {
                 if (a.StartsWith("--url=")) _url = a.Substring(6);
-                else if (a.StartsWith("--quality=")) _jpegQuality = long.Parse(a.Substring(10));
+                else if (a.StartsWith("--source=")) _source = a.Substring(9).ToLowerInvariant();
+                else if (a.StartsWith("--step=")) _step = Math.Max(1, int.Parse(a.Substring(7)));
+                else if (a.StartsWith("--gain=")) _gain = float.Parse(a.Substring(7), System.Globalization.CultureInfo.InvariantCulture);
                 else if (a.StartsWith("--every=")) _sendEvery = Math.Max(1, int.Parse(a.Substring(8)));
                 else if (a == "--jpeg") _useJpeg = true;
-                else if (a.StartsWith("--gain=")) _gain = float.Parse(a.Substring(7), System.Globalization.CultureInfo.InvariantCulture);
+                else if (a.StartsWith("--quality=")) _jpegQuality = long.Parse(a.Substring(10));
             }
+            bool wantIr = _source == "ir";
 
             _sensor = KinectSensor.GetDefault();
             if (_sensor == null)
@@ -70,9 +79,10 @@ namespace KinectBridge
                 return;
             }
             _sensor.Open();
-            _reader = _sensor.OpenMultiSourceFrameReader(FrameSourceTypes.Infrared | FrameSourceTypes.Body);
+            var types = (wantIr ? FrameSourceTypes.Infrared : FrameSourceTypes.Color) | FrameSourceTypes.Body;
+            _reader = _sensor.OpenMultiSourceFrameReader(types);
             _reader.MultiSourceFrameArrived += OnFrame;
-            Console.WriteLine("Kinect da mo. Dang ket noi " + _url + " …");
+            Console.WriteLine("Kinect da mo (nguon = " + (wantIr ? "IR" : "COLOR") + "). Dang ket noi " + _url + " …");
 
             // Tự nối lại: app có thể khởi động sau bridge, hoặc restart giữa chừng.
             while (true)
@@ -103,47 +113,101 @@ namespace KinectBridge
 
             ReadBodies(multi);
 
+            _frameIndex++;
+            if (_frameIndex % _sendEvery != 0) return;
+            // Bỏ frame khi frame trước chưa gửi xong — thà rớt frame còn hơn dồn
+            // hàng đợi rồi trễ cả giây.
+            if (_sending || _ws == null || _ws.State != WebSocketState.Open) return;
+
+            if (_source == "ir") SendInfrared(multi);
+            else SendColor(multi);
+        }
+
+        // ------------------------------------------------------------- COLOR
+        private static void SendColor(MultiSourceFrame multi)
+        {
+            using (var cf = multi.ColorFrameReference.AcquireFrame())
+            {
+                if (cf == null) return;
+                var d = cf.FrameDescription;
+                int sw = d.Width, sh = d.Height;       // 1920x1080
+                int need = sw * sh * 4;
+                if (_bgra == null || _bgra.Length != need) _bgra = new byte[need];
+                cf.CopyConvertedFrameDataToArray(_bgra, ColorImageFormat.Bgra);
+
+                // Giảm mẫu ngay tại đây. Gửi nguyên 1920x1080 là 8.3MB/frame —
+                // vô nghĩa, vì MediaPipe co ảnh về cỡ nhỏ trước khi chạy, mà
+                // 1 bàn tay ở 1-2m thì 640x360 đã thừa chi tiết.
+                int w = sw / _step, h = sh / _step;
+                int len = 10 + w * h * 3;
+                if (_frame == null || _frame.Length != len) _frame = new byte[len];
+                WriteHeader(_frame, w, h, 3);
+
+                int o = 10;
+                for (int y = 0; y < h; y++)
+                {
+                    int row = (y * _step) * sw * 4;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = row + (x * _step) * 4;   // BGRA
+                        _frame[o++] = _bgra[i + 2];      // R
+                        _frame[o++] = _bgra[i + 1];      // G
+                        _frame[o++] = _bgra[i];          // B
+                    }
+                }
+                Send(_frame, w, h, 3);
+            }
+        }
+
+        // ---------------------------------------------------------------- IR
+        private static void SendInfrared(MultiSourceFrame multi)
+        {
             using (var ir = multi.InfraredFrameReference.AcquireFrame())
             {
                 if (ir == null) return;
-                _frameIndex++;
-                if (_frameIndex % _sendEvery != 0) return;
-                // Bỏ frame khi frame trước chưa gửi xong — thà rớt frame còn hơn
-                // dồn hàng đợi rồi trễ cả giây.
-                if (_sending || _ws == null || _ws.State != WebSocketState.Open) return;
-
-                var desc = ir.FrameDescription;
-                int w = desc.Width, h = desc.Height;
-                if (_pixels == null || _pixels.Length != w * h) _pixels = new byte[w * h];
-
+                var d = ir.FrameDescription;
+                int w = d.Width, h = d.Height;
+                if (_gray == null || _gray.Length != w * h) _gray = new byte[w * h];
                 using (var buf = ir.LockImageBuffer())
                 {
                     ToGrayscale(buf, w * h);
                 }
 
-                _sending = true;
-                if (_useJpeg)
-                {
-                    byte[] jpeg = EncodeJpeg(_pixels, w, h);
-                    string json = "{\"t\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                                  + ",\"ir\":\"" + Convert.ToBase64String(jpeg)
-                                  + "\",\"hand\":" + _handJson + "}";
-                    var bytes = Encoding.UTF8.GetBytes(json);
-                    _ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None)
-                       .ContinueWith(t => { _sending = false; });
-                }
-                else
-                {
-                    // 'DJIR' + w:uint16 LE + h:uint16 LE + w*h byte xám
-                    int len = 8 + w * h;
-                    if (_frame == null || _frame.Length != len) _frame = new byte[len];
-                    _frame[0] = (byte)'D'; _frame[1] = (byte)'J'; _frame[2] = (byte)'I'; _frame[3] = (byte)'R';
-                    _frame[4] = (byte)(w & 0xFF); _frame[5] = (byte)(w >> 8);
-                    _frame[6] = (byte)(h & 0xFF); _frame[7] = (byte)(h >> 8);
-                    Buffer.BlockCopy(_pixels, 0, _frame, 8, w * h);
-                    _ws.SendAsync(new ArraySegment<byte>(_frame), WebSocketMessageType.Binary, true, CancellationToken.None)
-                       .ContinueWith(t => { _sending = false; });
-                }
+                int len = 10 + w * h;
+                if (_frame == null || _frame.Length != len) _frame = new byte[len];
+                WriteHeader(_frame, w, h, 1);
+                Buffer.BlockCopy(_gray, 0, _frame, 10, w * h);
+                Send(_frame, w, h, 1);
+            }
+        }
+
+        // ------------------------------------------------------------- gửi
+        private static void WriteHeader(byte[] b, int w, int h, int channels)
+        {
+            b[0] = (byte)'D'; b[1] = (byte)'J'; b[2] = (byte)'I'; b[3] = (byte)'R';
+            b[4] = (byte)(w & 0xFF); b[5] = (byte)(w >> 8);
+            b[6] = (byte)(h & 0xFF); b[7] = (byte)(h >> 8);
+            b[8] = (byte)channels;
+            b[9] = 0; // dành chỗ
+        }
+
+        private static void Send(byte[] payload, int w, int h, int channels)
+        {
+            _sending = true;
+            if (_useJpeg)
+            {
+                byte[] jpeg = EncodeJpeg(payload, 10, w, h, channels);
+                string json = "{\"t\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                              + ",\"ir\":\"" + Convert.ToBase64String(jpeg)
+                              + "\",\"hand\":" + _handJson + "}";
+                var bytes = Encoding.UTF8.GetBytes(json);
+                _ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None)
+                   .ContinueWith(t => { _sending = false; });
+            }
+            else
+            {
+                _ws.SendAsync(new ArraySegment<byte>(payload), WebSocketMessageType.Binary, true, CancellationToken.None)
+                   .ContinueWith(t => { _sending = false; });
             }
         }
 
@@ -157,11 +221,11 @@ namespace KinectBridge
                 ratio /= IrSceneValueAverage * IrSceneStandardDeviations;
                 ratio *= _gain;
                 ratio = Math.Min(IrOutputValueMaximum, Math.Max(IrOutputValueMinimum, ratio));
-                _pixels[i] = (byte)(ratio * 255f);
+                _gray[i] = (byte)(ratio * 255f);
             }
         }
 
-        /// <summary>Bàn tay phải của người gần nhất — dữ liệu dự phòng khi MediaPipe mất dấu.</summary>
+        /// <summary>Bàn tay phải của người gần nhất — để sẵn cho đường dự phòng.</summary>
         private static void ReadBodies(MultiSourceFrame multi)
         {
             using (var bf = multi.BodyFrameReference.AcquireFrame())
@@ -190,32 +254,40 @@ namespace KinectBridge
             }
         }
 
-        private static byte[] EncodeJpeg(byte[] gray, int w, int h)
+        private static byte[] EncodeJpeg(byte[] src, int offset, int w, int h, int channels)
         {
             using (var bmp = new Bitmap(w, h, PixelFormat.Format24bppRgb))
             {
-                var rect = new Rectangle(0, 0, w, h);
-                var data = bmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+                var data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
                 int stride = data.Stride;
                 var row = new byte[stride];
                 for (int y = 0; y < h; y++)
                 {
-                    int o = y * w;
+                    int o = offset + y * w * channels;
                     for (int x = 0; x < w; x++)
                     {
-                        byte v = gray[o + x];
-                        row[x * 3] = v; row[x * 3 + 1] = v; row[x * 3 + 2] = v;
+                        // Bitmap 24bpp xếp theo BGR.
+                        if (channels == 1)
+                        {
+                            byte v = src[o + x];
+                            row[x * 3] = v; row[x * 3 + 1] = v; row[x * 3 + 2] = v;
+                        }
+                        else
+                        {
+                            row[x * 3] = src[o + x * 3 + 2];
+                            row[x * 3 + 1] = src[o + x * 3 + 1];
+                            row[x * 3 + 2] = src[o + x * 3];
+                        }
                     }
                     Marshal.Copy(row, 0, data.Scan0 + y * stride, stride);
                 }
                 bmp.UnlockBits(data);
 
-                var codec = GetJpegCodec();
                 var ps = new EncoderParameters(1);
                 ps.Param[0] = new EncoderParameter(Encoder.Quality, _jpegQuality);
                 using (var ms = new MemoryStream())
                 {
-                    bmp.Save(ms, codec, ps);
+                    bmp.Save(ms, GetJpegCodec(), ps);
                     return ms.ToArray();
                 }
             }

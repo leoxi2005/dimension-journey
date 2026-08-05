@@ -61,7 +61,7 @@ tiếng ở đó thì sẽ có 2–3 bản MediaPipe ăn CPU và mỗi nốt nh�
 | Nguồn | Khi nào dùng |
 |---|---|
 | **Camera + MediaPipe** (mặc định) | Người đứng cách 1–2 m và phòng còn đủ sáng. Chính xác nhất — 21 điểm bàn tay, tách được "chụm ngón" với "nắm đấm". |
-| **Kinect v2 (IR)** | Phòng chiếu tối om. Kinect tự rọi hồng ngoại nên vẫn thấy tay; app chạy MediaPipe trên **ảnh IR** đó. Cần chạy `KinectBridge.exe` — xem [kinect-bridge/README.md](kinect-bridge/README.md). |
+| **Kinect v2** | Kinect v2 **không có driver UVC** — không `getUserMedia` nào thấy nó, nên dù chỉ dùng như webcam thường vẫn phải chạy `KinectBridge.exe`. Bridge gửi được **ảnh màu** (phòng đủ sáng, chính xác nhất) hoặc **ảnh hồng ngoại** (phòng tối om). Xem [kinect-bridge/README.md](kinect-bridge/README.md). |
 | **Chuột** | Test, và là đường cứu hộ nếu camera chết giữa show. |
 
 Với 1 người ở 1–2 m thì **MediaPipe là phương án tối ưu**, không phải body tracking

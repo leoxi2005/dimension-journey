@@ -2,24 +2,29 @@
 
 Chương trình nhỏ chạy trên Windows, đọc Kinect v2 rồi đẩy sang app qua WebSocket.
 
-## Vì sao cần một tiến trình riêng
+## Vì sao vẫn phải có tiến trình riêng, kể cả khi phòng đủ sáng
 
-Kinect v2 **không** hiện ra như webcam UVC — không có `getUserMedia` nào thấy nó.
-Muốn đọc phải qua Kinect SDK 2.0 (COM/.NET, chỉ Windows). Nhét SDK đó thẳng vào
-Electron bằng native addon là đường dài và dễ vỡ, nên tách hẳn ra: bridge chết thì
-app vẫn sống, và bạn khởi động lại bridge mà không phải tắt show.
+Kinect v2 **không có driver UVC**. Không một `getUserMedia` nào thấy nó, ô "Thiết
+bị" trong app sẽ không bao giờ liệt kê nó. Dù bạn chỉ muốn dùng nó như một webcam
+thường thì vẫn **bắt buộc** đi qua Kinect SDK 2.0 (COM/.NET, chỉ Windows). Nhét
+SDK đó thẳng vào Electron bằng native addon là đường dài và dễ vỡ, nên tách hẳn
+ra: bridge chết thì app vẫn sống, khởi động lại bridge không phải tắt show.
 
-## Thứ đáng giá nhất là ảnh hồng ngoại, không phải skeleton
+## Chọn nguồn hình: màu hay hồng ngoại
 
-Phòng projection mapping tối om. Webcam RGB trong đó gần như mù, MediaPipe sẽ mất
-dấu tay liên tục. Kinect **tự rọi hồng ngoại**, nên ảnh IR của nó sáng rõ bất kể
-đèn phòng. Bridge gửi ảnh IR đó sang app, app chạy MediaPipe HandLandmarker trên
-ảnh IR — vẫn đủ 21 điểm để bắt cử chỉ chụm ngón.
+| | `--source=color` (mặc định) | `--source=ir` |
+|---|---|---|
+| Ảnh | camera màu 1920×1080, giảm mẫu còn 640×360 | hồng ngoại 512×424 |
+| Cần ánh sáng | có — phòng phải đủ sáng | không, Kinect tự rọi IR |
+| Độ chính xác MediaPipe | **cao nhất** (mô hình huấn luyện trên ảnh màu) | thấp hơn, chưa đo được |
+| fps trong phòng tối | tụt xuống ~15 (tự tăng phơi sáng) | ổn định 30 |
 
-Hand state thô của Kinect (`open` / `closed` / `lasso`) cũng được gửi kèm trong
-trường `hand`, nhưng app **chưa dùng** — nó quá thô để phân biệt "chụm ngón" với
-"nắm tay", vốn là hai cử chỉ khác nhau trong tác phẩm này. Trường này để sẵn cho
-sau này nếu cần một đường dự phòng khi MediaPipe mất dấu.
+**Phòng immersive còn đủ sáng thì dùng `color`.** Chỉ đổi sang `ir` khi thử thực
+tế thấy MediaPipe mất dấu tay vì thiếu sáng.
+
+Hand state thô của Kinect (`open` / `closed` / `lasso`) được gửi kèm trong trường
+`hand`, nhưng app **chưa dùng** — nó quá thô để phân biệt "chụm ngón" với "nắm
+tay", vốn là hai cử chỉ khác nhau trong tác phẩm này. Để sẵn cho đường dự phòng.
 
 ## Cần cài gì
 
@@ -56,7 +61,9 @@ Tuỳ chọn:
 | Tham số | Mặc định | Ý nghĩa |
 |---|---|---|
 | `--url=ws://127.0.0.1:9010` | cổng 9010 | Phải khớp ô "Cổng bridge" trong app |
-| `--gain=1.0` | 1.0 | Phơi sáng IR. Bàn tay trắng bệt mất hết chi tiết → hạ xuống 0.6–0.8. Tay quá tối → tăng lên 1.3–1.6 |
+| `--source=color` | color | `color` = camera màu, `ir` = hồng ngoại |
+| `--step=3` | 3 | Giảm mẫu ảnh màu: 1920/3 = 640 ngang. Để 2 nếu muốn nét hơn (960), 4 nếu máy yếu |
+| `--gain=1.0` | 1.0 | Phơi sáng, **chỉ có tác dụng với `--source=ir`**. Tay trắng bệt mất chi tiết → hạ 0.6–0.8. Tay quá tối → tăng 1.3–1.6 |
 | `--every=1` | 1 | 1 = 30fps, 2 = 15fps. Tăng lên nếu CPU nặng |
 | `--jpeg` | tắt | Chuyển sang gửi JPEG+base64 thay vì nhị phân thô. CHỈ dùng khi phải đẩy qua mạng thật; cùng máy thì đừng bật, nó chỉ thêm trễ |
 | `--quality=70` | 70 | Chất lượng JPEG (chỉ có tác dụng khi bật `--jpeg`) |
@@ -71,9 +78,11 @@ Trong app, chấm cạnh "Cổng bridge" chuyển **xanh** kèm số fps là đ�
 
 ```
 byte 0..3   'D' 'J' 'I' 'R'
-byte 4..5   width   (uint16, little endian)
-byte 6..7   height  (uint16, little endian)
-byte 8..    width*height byte xám, 8-bit, theo hàng từ trên xuống
+byte 4..5   width    (uint16, little endian)
+byte 6..7   height   (uint16, little endian)
+byte 8      channels (1 = xám 8-bit, 3 = RGB 8-bit)
+byte 9      dành chỗ, để 0
+byte 10..   width*height*channels byte pixel, theo hàng từ trên xuống
 ```
 
 Không nén, không base64. 512×424 @30fps chỉ 6.5 MB/s trên localhost — rẻ hơn
@@ -96,12 +105,17 @@ App tự nhận ra dạng nào và tự co theo kích thước thật, không c�
 Bất cứ nguồn nào (Azure Kinect, OAK-D, camera IR rời…) nói đúng một trong hai
 dạng trên là cắm vào được, không phải sửa app.
 
-## Nếu bạn chỉ cần "thấy được trong tối"
+## Cân nhắc: webcam USB thường có khi còn tốt hơn
 
-Cân nhắc **webcam IR (UVC) + đèn rọi hồng ngoại 850nm** thay cho Kinect. Nó cắm
-vào là app nhận ngay như một camera thường (chọn trong ô "Thiết bị"), **không cần
-bridge, không cần Kinect SDK, không thêm một chặng trễ nào**, và chạy được 60fps
-thay vì trần 30fps của Kinect.
+Nếu phòng đủ sáng và bạn chỉ cần bàn tay, một **webcam USB thường** thắng Kinect
+ở đúng những thứ quan trọng với tác phẩm này:
 
-Kinect chỉ hơn khi bạn cần thứ mà tác phẩm này hiện KHÔNG dùng: chiều sâu để lọc
-người đi phía sau, hoặc nhiều người cùng lúc.
+- cắm vào là app nhận ngay, **không bridge, không SDK, không thêm chặng trễ nào**
+- chạy được **60fps**, Kinect trần 30
+- góc nhìn hẹp hơn (~60° so với 84° của Kinect) → ở 1–2m bàn tay chiếm nhiều
+  pixel hơn trong khung → MediaPipe bắt chính xác hơn
+
+Kinect chỉ hơn khi cần thứ tác phẩm này hiện KHÔNG dùng: chiều sâu để lọc người
+đi phía sau, hoặc nhiều người cùng lúc. Bạn đã có sẵn Kinect nên cứ thử trước —
+nhưng nếu thấy trễ hoặc thiếu chính xác thì webcam thường là đường lùi rẻ và
+**không phải sửa một dòng code nào**.

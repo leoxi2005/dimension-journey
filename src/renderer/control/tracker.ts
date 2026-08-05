@@ -191,16 +191,20 @@ export class HandTracker {
     else this.onKinectBinary(frame)
   }
 
-  /** Đường NHANH: 'DJIR' + w:uint16 + h:uint16 + w*h byte xám thô.
-   *  Không nén nên không mất thời gian giải nén, và vẽ thẳng vào canvas mà
-   *  MediaPipe sẽ đọc — bỏ được cả bước createImageBitmap bất đồng bộ. */
+  /** Đường NHANH — gói nhị phân thô, không nén:
+   *    'DJIR' + w:uint16 + h:uint16 + channels:uint8 + reserved:uint8 + pixel
+   *    channels = 1 (xám, nguồn IR) hoặc 3 (RGB, nguồn camera màu).
+   *  Ghi thẳng vào canvas mà MediaPipe sẽ đọc — bỏ được cả giải nén lẫn bước
+   *  createImageBitmap bất đồng bộ. */
   private onKinectBinary(buf: Uint8Array): void {
-    if (buf.length < 8) return
+    if (buf.length < 10) return
     if (buf[0] !== 0x44 || buf[1] !== 0x4a || buf[2] !== 0x49 || buf[3] !== 0x52) return // 'DJIR'
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
     const w = dv.getUint16(4, true)
     const h = dv.getUint16(6, true)
-    if (w <= 0 || h <= 0 || buf.length < 8 + w * h) return
+    const ch = buf[8] || 1
+    if (w <= 0 || h <= 0 || (ch !== 1 && ch !== 3)) return
+    if (buf.length < 10 + w * h * ch) return
 
     const c = this.kinectCanvas
     if (c.width !== w || c.height !== h) {
@@ -213,15 +217,24 @@ export class HandTracker {
     if (!this.kinectRgba || this.kinectRgba.width !== w) {
       this.kinectRgba = g.createImageData(w, h)
     }
-    // Bung xám -> RGBA qua khung nhìn 32-bit: một lần ghi mỗi pixel thay vì bốn.
+    // Ghi qua khung nhìn 32-bit: một lần ghi mỗi pixel thay vì bốn.
+    // (Little endian nên thứ tự byte trong ô 32-bit là A,B,G,R ngược lại.)
     const out = new Uint32Array(this.kinectRgba.data.buffer)
     const n = w * h
-    for (let i = 0; i < n; i++) {
-      const v = buf[8 + i]
-      out[i] = 0xff000000 | (v << 16) | (v << 8) | v
+    if (ch === 1) {
+      for (let i = 0; i < n; i++) {
+        const v = buf[10 + i]
+        out[i] = 0xff000000 | (v << 16) | (v << 8) | v
+      }
+    } else {
+      for (let i = 0, o = 10; i < n; i++, o += 3) {
+        out[i] = 0xff000000 | (buf[o + 2] << 16) | (buf[o + 1] << 8) | buf[o]
+      }
     }
     g.putImageData(this.kinectRgba, 0, 0)
-    if (!this.kinectReady) window.dj.log('kinect', `frame đầu tiên: ${w}x${h} nhị phân thô`)
+    if (!this.kinectReady) {
+      window.dj.log('kinect', `frame đầu tiên: ${w}x${h} ${ch === 3 ? 'MÀU' : 'XÁM/IR'} nhị phân thô`)
+    }
     this.kinectReady = true
     this.kinectSeq++
   }
@@ -390,6 +403,19 @@ export class HandTracker {
     const g = cv.getContext('2d')
     if (!g) return
     g.clearRect(0, 0, cv.width, cv.height)
+    // Nguồn Kinect không đi qua thẻ <video> (không có UVC), nên ô xem trước sẽ
+    // đen thui nếu không tự vẽ. Không thấy hình thì operator chỉnh góc trong mù.
+    if (this.state.input.source === 'kinect' && this.kinectReady) {
+      g.save()
+      if (this.state.input.mirror) {
+        g.translate(cv.width, 0)
+        g.scale(-1, 1)
+      }
+      g.globalAlpha = 0.6
+      g.drawImage(this.kinectCanvas, 0, 0, cv.width, cv.height)
+      g.restore()
+      g.globalAlpha = 1
+    }
     if (!lms) return
     const mir = this.state.input.mirror
     const X = (p: Landmark): number => (mir ? 1 - p.x : p.x) * cv.width
