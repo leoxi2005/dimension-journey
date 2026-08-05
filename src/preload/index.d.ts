@@ -13,7 +13,7 @@ export interface DjApi {
   onState(fn: (s: AppState) => void): void
   onHand(fn: (h: HandFrame) => void): void
   onStatus(fn: (s: unknown) => void): void
-  onKinectFrame(fn: (json: string) => void): void
+  onKinectFrame(fn: (frame: string | Uint8Array) => void): void
 }
 
 declare global {

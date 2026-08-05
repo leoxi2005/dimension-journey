@@ -6,10 +6,15 @@
 // bằng native addon là đường dài và dễ vỡ. Cách rẻ và chắc hơn: một app C# nhỏ
 // đọc Kinect rồi đẩy sang đây qua WebSocket. Nguồn C# nằm ở kinect-bridge/.
 //
-// Giao thức (bridge -> app), mỗi frame một message JSON:
-//   { "t": <ms>,
-//     "ir": "<base64 JPEG ảnh hồng ngoại 512x424>",   // tuỳ chọn
-//     "hands": [ { "x":0..1, "y":0..1, "state":"open|closed|lasso|unknown" } ] }
+// Giao thức — hai dạng message:
+//
+//   NHỊ PHÂN (nên dùng): 'DJIR' + w:uint16 + h:uint16 + w*h byte xám thô.
+//     Không nén, không base64. Trên localhost 512x424@30fps chỉ 6.5MB/s — rẻ hơn
+//     nhiều so với chi phí nén JPEG một đầu rồi giải nén đầu kia, mà độ trễ là
+//     thứ đắt nhất trong cả chuỗi tương tác này.
+//
+//   TEXT (tương thích ngược / nguồn khác):
+//     { "t": <ms>, "ir": "<base64 JPEG>", "hand": {...} | null }
 //
 // Ảnh IR là thứ đáng giá nhất: phòng chiếu tối om thì webcam RGB mù, còn Kinect
 // tự rọi hồng ngoại nên vẫn thấy rõ tay. App chạy MediaPipe TRÊN ảnh IR đó.
@@ -65,7 +70,7 @@ export class KinectBridge {
         if (this.client) { try { this.client.close() } catch { /* đã đóng */ } }
         this.client = sock
         log('kinect', 'bridge đã kết nối')
-        sock.on('message', (raw: Buffer) => this.onMessage(raw))
+        sock.on('message', (raw: Buffer, isBinary: boolean) => this.onMessage(raw, isBinary))
         sock.on('close', () => {
           if (this.client === sock) this.client = null
           log('kinect', 'bridge ngắt kết nối')
@@ -82,7 +87,7 @@ export class KinectBridge {
     }
   }
 
-  private onMessage(raw: Buffer): void {
+  private onMessage(raw: Buffer, isBinary = false): void {
     this.frames++
     const now = Date.now()
     if (now - this.fpsMark >= 1000) {
@@ -92,9 +97,11 @@ export class KinectBridge {
     }
     const win = this.target?.()
     if (!win || win.isDestroyed()) return
-    // Chuyển thẳng chuỗi JSON sang Control, không parse ở main: main thread
+    // Chuyển thẳng sang Control, không đụng vào nội dung ở main: main thread
     // phải rảnh, và Control mới là nơi cần dữ liệu.
-    win.webContents.send('dj:kinectFrame', raw.toString('utf8'))
+    // Buffer đi qua IPC bằng structured clone, không phải chuỗi hoá — nên frame
+    // nhị phân không tốn thêm lần copy nào đáng kể.
+    win.webContents.send('dj:kinectFrame', isBinary ? raw : raw.toString('utf8'))
   }
 
   stop(): void {

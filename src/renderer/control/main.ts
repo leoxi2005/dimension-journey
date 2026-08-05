@@ -356,7 +356,7 @@ async function boot(): Promise<void> {
   if (state.input.source === 'camera') await tracker.openCamera(state.input.deviceId)
   await listCameras()
 
-  window.dj.onKinectFrame((json) => tracker?.onKinectJson(json))
+  window.dj.onKinectFrame((frame) => tracker?.onKinectFrame(frame))
 
   let lastStage = state.stage
   window.dj.onState((s) => {

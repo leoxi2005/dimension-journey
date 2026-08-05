@@ -29,7 +29,7 @@ const api = {
   onStatus: (fn: (s: unknown) => void): void => {
     ipcRenderer.on('dj:status', (_e, s) => fn(s))
   },
-  onKinectFrame: (fn: (json: string) => void): void => {
+  onKinectFrame: (fn: (frame: string | Uint8Array) => void): void => {
     ipcRenderer.on('dj:kinectFrame', (_e, j) => fn(j))
   }
 }

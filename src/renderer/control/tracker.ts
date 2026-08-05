@@ -96,9 +96,10 @@ export class HandTracker {
   private fx = new OneEuro()
   private fy = new OneEuro()
 
-  /** Ảnh IR mới nhất từ Kinect bridge, đã giải mã. */
-  private kinectBitmap: ImageBitmap | null = null
+  /** Khung IR mới nhất từ Kinect bridge, đã vẽ sẵn vào canvas cho MediaPipe đọc. */
   private kinectCanvas = document.createElement('canvas')
+  private kinectRgba: ImageData | null = null
+  private kinectReady = false
   private kinectSeq = 0
   private lastKinectSeq = -1
   private kinectDecoding = false
@@ -184,9 +185,50 @@ export class HandTracker {
     this.video.srcObject = null
   }
 
-  /** Frame JSON từ Kinect bridge. Giải mã ảnh IR không đồng bộ, bỏ frame nếu
+  /** Frame từ Kinect bridge — nhị phân (nhanh) hoặc JSON+JPEG (tương thích). */
+  onKinectFrame(frame: string | Uint8Array): void {
+    if (typeof frame === 'string') this.onKinectJson(frame)
+    else this.onKinectBinary(frame)
+  }
+
+  /** Đường NHANH: 'DJIR' + w:uint16 + h:uint16 + w*h byte xám thô.
+   *  Không nén nên không mất thời gian giải nén, và vẽ thẳng vào canvas mà
+   *  MediaPipe sẽ đọc — bỏ được cả bước createImageBitmap bất đồng bộ. */
+  private onKinectBinary(buf: Uint8Array): void {
+    if (buf.length < 8) return
+    if (buf[0] !== 0x44 || buf[1] !== 0x4a || buf[2] !== 0x49 || buf[3] !== 0x52) return // 'DJIR'
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+    const w = dv.getUint16(4, true)
+    const h = dv.getUint16(6, true)
+    if (w <= 0 || h <= 0 || buf.length < 8 + w * h) return
+
+    const c = this.kinectCanvas
+    if (c.width !== w || c.height !== h) {
+      c.width = w
+      c.height = h
+      this.kinectRgba = null
+    }
+    const g = c.getContext('2d', { willReadFrequently: false })
+    if (!g) return
+    if (!this.kinectRgba || this.kinectRgba.width !== w) {
+      this.kinectRgba = g.createImageData(w, h)
+    }
+    // Bung xám -> RGBA qua khung nhìn 32-bit: một lần ghi mỗi pixel thay vì bốn.
+    const out = new Uint32Array(this.kinectRgba.data.buffer)
+    const n = w * h
+    for (let i = 0; i < n; i++) {
+      const v = buf[8 + i]
+      out[i] = 0xff000000 | (v << 16) | (v << 8) | v
+    }
+    g.putImageData(this.kinectRgba, 0, 0)
+    if (!this.kinectReady) window.dj.log('kinect', `frame đầu tiên: ${w}x${h} nhị phân thô`)
+    this.kinectReady = true
+    this.kinectSeq++
+  }
+
+  /** Đường TƯƠNG THÍCH: JSON + JPEG base64. Giải mã bất đồng bộ; bỏ frame nếu
    *  frame trước còn đang giải mã — thà rớt frame còn hơn dồn hàng đợi. */
-  onKinectJson(json: string): void {
+  private onKinectJson(json: string): void {
     if (this.kinectDecoding) return
     let msg: any
     try { msg = JSON.parse(json) } catch { return }
@@ -196,8 +238,15 @@ export class HandTracker {
       .then((r) => r.blob())
       .then((b) => createImageBitmap(b))
       .then((bmp) => {
-        this.kinectBitmap?.close()
-        this.kinectBitmap = bmp
+        const c = this.kinectCanvas
+        if (c.width !== bmp.width || c.height !== bmp.height) {
+          c.width = bmp.width
+          c.height = bmp.height
+        }
+        c.getContext('2d')?.drawImage(bmp, 0, 0)
+        bmp.close()
+        if (!this.kinectReady) window.dj.log('kinect', `frame đầu tiên: ${c.width}x${c.height} JPEG`)
+        this.kinectReady = true
         this.kinectSeq++
       })
       .catch(() => { /* frame hỏng, bỏ qua */ })
@@ -212,15 +261,11 @@ export class HandTracker {
 
     let image: HTMLVideoElement | HTMLCanvasElement | null = null
     if (src === 'kinect') {
-      if (!this.kinectBitmap || this.kinectSeq === this.lastKinectSeq) return
+      // Chỉ chạy khi có frame MỚI: detectForVideo trên cùng một ảnh hai lần vừa
+      // phí CPU vừa làm MediaPipe hiểu sai vận tốc giữa các frame.
+      if (!this.kinectReady || this.kinectSeq === this.lastKinectSeq) return
       this.lastKinectSeq = this.kinectSeq
-      const c = this.kinectCanvas
-      if (c.width !== this.kinectBitmap.width) {
-        c.width = this.kinectBitmap.width
-        c.height = this.kinectBitmap.height
-      }
-      c.getContext('2d')!.drawImage(this.kinectBitmap, 0, 0)
-      image = c
+      image = this.kinectCanvas
     } else {
       if (this.video.readyState < 2) return
       if (this.lastVideoTime === this.video.currentTime) return
@@ -367,7 +412,6 @@ export class HandTracker {
   dispose(): void {
     this.dead = true
     this.closeCamera()
-    this.kinectBitmap?.close()
     try { this.landmarker?.close?.() } catch { /* đã đóng */ }
   }
 }

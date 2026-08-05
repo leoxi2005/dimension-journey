@@ -6,7 +6,11 @@
 // đường dài và dễ vỡ; tách ra một tiến trình nhỏ thì đơn giản và tự khởi động
 // lại được nếu chết.
 //
-// GỬI CÁI GÌ: ảnh HỒNG NGOẠI 512×424 (JPEG) + hand state của body tracking.
+// GỬI CÁI GÌ: ảnh HỒNG NGOẠI 512×424 + hand state của body tracking.
+// Mặc định gửi NHỊ PHÂN THÔ ('DJIR' + w + h + byte xám): không nén, không base64.
+// Trên localhost chỉ 6.5MB/s, rẻ hơn nhiều so với nén JPEG một đầu rồi giải nén
+// đầu kia — mà độ trễ mới là thứ đắt nhất trong chuỗi tương tác này. Dùng --jpeg
+// nếu cần gửi qua mạng thật.
 // Ảnh IR mới là thứ đáng giá: phòng chiếu tối om thì webcam RGB mù hoàn toàn,
 // còn Kinect tự rọi hồng ngoại nên vẫn thấy rõ bàn tay. App chạy MediaPipe
 // HandLandmarker TRÊN ảnh IR đó — vẫn có đủ 21 điểm để bắt cử chỉ chụm ngón,
@@ -39,10 +43,13 @@ namespace KinectBridge
         private static ClientWebSocket _ws;
         private static string _url = "ws://127.0.0.1:9010";
         private static long _jpegQuality = 70;
+        private static bool _useJpeg;
+        private static float _gain = 1.0f;   // chỉnh phơi sáng IR: tay quá trắng thì hạ
         private static int _sendEvery = 1;         // 1 = mọi frame (30fps), 2 = 15fps
         private static int _frameIndex;
         private static volatile bool _sending;     // không cho >1 frame bay cùng lúc
         private static byte[] _pixels;
+        private static byte[] _frame;
         private static string _handJson = "null";
 
         private static async Task Main(string[] args)
@@ -52,6 +59,8 @@ namespace KinectBridge
                 if (a.StartsWith("--url=")) _url = a.Substring(6);
                 else if (a.StartsWith("--quality=")) _jpegQuality = long.Parse(a.Substring(10));
                 else if (a.StartsWith("--every=")) _sendEvery = Math.Max(1, int.Parse(a.Substring(8)));
+                else if (a == "--jpeg") _useJpeg = true;
+                else if (a.StartsWith("--gain=")) _gain = float.Parse(a.Substring(7), System.Globalization.CultureInfo.InvariantCulture);
             }
 
             _sensor = KinectSensor.GetDefault();
@@ -112,14 +121,29 @@ namespace KinectBridge
                     ToGrayscale(buf, w * h);
                 }
 
-                byte[] jpeg = EncodeJpeg(_pixels, w, h);
-                string json = "{\"t\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                              + ",\"ir\":\"" + Convert.ToBase64String(jpeg)
-                              + "\",\"hand\":" + _handJson + "}";
                 _sending = true;
-                var bytes = Encoding.UTF8.GetBytes(json);
-                _ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None)
-                   .ContinueWith(t => { _sending = false; });
+                if (_useJpeg)
+                {
+                    byte[] jpeg = EncodeJpeg(_pixels, w, h);
+                    string json = "{\"t\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                                  + ",\"ir\":\"" + Convert.ToBase64String(jpeg)
+                                  + "\",\"hand\":" + _handJson + "}";
+                    var bytes = Encoding.UTF8.GetBytes(json);
+                    _ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None)
+                       .ContinueWith(t => { _sending = false; });
+                }
+                else
+                {
+                    // 'DJIR' + w:uint16 LE + h:uint16 LE + w*h byte xám
+                    int len = 8 + w * h;
+                    if (_frame == null || _frame.Length != len) _frame = new byte[len];
+                    _frame[0] = (byte)'D'; _frame[1] = (byte)'J'; _frame[2] = (byte)'I'; _frame[3] = (byte)'R';
+                    _frame[4] = (byte)(w & 0xFF); _frame[5] = (byte)(w >> 8);
+                    _frame[6] = (byte)(h & 0xFF); _frame[7] = (byte)(h >> 8);
+                    Buffer.BlockCopy(_pixels, 0, _frame, 8, w * h);
+                    _ws.SendAsync(new ArraySegment<byte>(_frame), WebSocketMessageType.Binary, true, CancellationToken.None)
+                       .ContinueWith(t => { _sending = false; });
+                }
             }
         }
 
@@ -131,6 +155,7 @@ namespace KinectBridge
             {
                 float ratio = src[i] / IrSourceValueMaximum;
                 ratio /= IrSceneValueAverage * IrSceneStandardDeviations;
+                ratio *= _gain;
                 ratio = Math.Min(IrOutputValueMaximum, Math.Max(IrOutputValueMinimum, ratio));
                 _pixels[i] = (byte)(ratio * 255f);
             }

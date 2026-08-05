@@ -56,8 +56,10 @@ Tuỳ chọn:
 | Tham số | Mặc định | Ý nghĩa |
 |---|---|---|
 | `--url=ws://127.0.0.1:9010` | cổng 9010 | Phải khớp ô "Cổng bridge" trong app |
-| `--quality=70` | 70 | Chất lượng JPEG. Hạ xuống nếu thấy nghẽn |
+| `--gain=1.0` | 1.0 | Phơi sáng IR. Bàn tay trắng bệt mất hết chi tiết → hạ xuống 0.6–0.8. Tay quá tối → tăng lên 1.3–1.6 |
 | `--every=1` | 1 | 1 = 30fps, 2 = 15fps. Tăng lên nếu CPU nặng |
+| `--jpeg` | tắt | Chuyển sang gửi JPEG+base64 thay vì nhị phân thô. CHỈ dùng khi phải đẩy qua mạng thật; cùng máy thì đừng bật, nó chỉ thêm trễ |
+| `--quality=70` | 70 | Chất lượng JPEG (chỉ có tác dụng khi bật `--jpeg`) |
 
 Bridge tự nối lại mỗi 2 giây, nên chạy trước hay sau app đều được.
 
@@ -65,19 +67,41 @@ Trong app, chấm cạnh "Cổng bridge" chuyển **xanh** kèm số fps là đ�
 
 ## Giao thức (nếu bạn muốn thay Kinect bằng cảm biến khác)
 
-Mỗi frame là một message WebSocket dạng text, JSON:
+**Dạng nhị phân — mặc định, nên dùng.** Mỗi frame là một message WebSocket binary:
+
+```
+byte 0..3   'D' 'J' 'I' 'R'
+byte 4..5   width   (uint16, little endian)
+byte 6..7   height  (uint16, little endian)
+byte 8..    width*height byte xám, 8-bit, theo hàng từ trên xuống
+```
+
+Không nén, không base64. 512×424 @30fps chỉ 6.5 MB/s trên localhost — rẻ hơn
+nhiều so với chi phí nén một đầu rồi giải nén đầu kia. Trong tác phẩm này **độ
+trễ là thứ đắt nhất**, nên đừng đánh đổi nó lấy băng thông mà bạn không thiếu.
+
+**Dạng text — tương thích ngược, dùng khi phải qua mạng thật:**
 
 ```json
 {
   "t": 1738742400000,
-  "ir": "<base64 JPEG, ảnh xám 512×424>",
+  "ir": "<base64 JPEG, ảnh xám>",
   "hand": { "x": 0.52, "y": 0.41, "z": 1.85, "state": "closed" }
 }
 ```
 
-- `ir` — bắt buộc. Ảnh mà MediaPipe sẽ chạy lên. Không cần đúng 512×424; app tự
-  co theo kích thước thật.
-- `hand` — tuỳ chọn, có thể `null`. `x`/`y` chuẩn hoá 0..1 theo khung ảnh.
+App tự nhận ra dạng nào và tự co theo kích thước thật, không cần đúng 512×424.
+`hand` là tuỳ chọn, có thể `null`.
 
-Bất cứ nguồn nào (Azure Kinect, OAK-D, camera IR rời…) nói đúng giao thức này là
-cắm vào được, không phải sửa app.
+Bất cứ nguồn nào (Azure Kinect, OAK-D, camera IR rời…) nói đúng một trong hai
+dạng trên là cắm vào được, không phải sửa app.
+
+## Nếu bạn chỉ cần "thấy được trong tối"
+
+Cân nhắc **webcam IR (UVC) + đèn rọi hồng ngoại 850nm** thay cho Kinect. Nó cắm
+vào là app nhận ngay như một camera thường (chọn trong ô "Thiết bị"), **không cần
+bridge, không cần Kinect SDK, không thêm một chặng trễ nào**, và chạy được 60fps
+thay vì trần 30fps của Kinect.
+
+Kinect chỉ hơn khi bạn cần thứ mà tác phẩm này hiện KHÔNG dùng: chiều sâu để lọc
+người đi phía sau, hoặc nhiều người cùng lúc.
