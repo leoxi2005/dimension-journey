@@ -29,6 +29,22 @@ export interface HandFrame {
   label: string
 }
 
+/** Tay thứ HAI — chỉ cần vị trí, dùng để xoay trường 5D. */
+export interface SecondHand {
+  present: boolean
+  nx: number
+  ny: number
+}
+
+/** Gói gửi mỗi frame: tay xuất hiện TRƯỚC lo việc vẽ, tay thứ hai lo việc xoay.
+ *  Một tay kiêm hai việc (chụm để vẽ / xoè để xoay) rất khó điều khiển. */
+export interface HandsFrame {
+  primary: HandFrame
+  second: SecondHand
+}
+
+export const EMPTY_SECOND: SecondHand = { present: false, nx: 0.5, ny: 0.5 }
+
 export const EMPTY_HAND: HandFrame = {
   present: false, nx: 0.5, ny: 0.5, pinch: false, palm: false, fist: false, ring: 0, label: ''
 }
@@ -59,7 +75,9 @@ export interface AppState {
     source: InputSource
     /** deviceId của camera đang dùng (rỗng = camera mặc định). */
     deviceId: string
-    /** % bề ngang tường mà bàn tay với tới được (40..100). */
+    /** % bề ngang tường mà bàn tay với tới được (20..100). Cũng là VÙNG NỘI DUNG:
+     *  nét vẽ và tiếng vọng 4D đều nằm gọn trong đó, vì hai tường chính nằm ở
+     *  giữa nên visual phải dồn về giữa chứ không trải đều 10m. */
     reach: number
     /** Làm mượt con trỏ 0..0.95 — cao = mượt nhưng trễ. Điều khiển tần số cắt
      *  của bộ lọc One Euro trong tracker, không phải lerp thô. */

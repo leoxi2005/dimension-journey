@@ -128,10 +128,13 @@
           <div id="gestDebug" class="mono" style="margin-top:6px;font-size:10px;color:var(--dim);line-height:1.5">—</div>
           <div class="row">
             <label class="lbl">Tầm với</label>
-            <input type="range" id="reach" min="40" max="100" step="1" />
+            <input type="range" id="reach" min="20" max="100" step="1" />
             <div class="val mono" id="reachVal"></div>
           </div>
-          <div class="note">100% = quét tay đi hết chiều dài tường. Hạ xuống nếu thấy nét giật ở hai đầu.</div>
+          <div class="note">
+            Vùng nội dung: nét vẽ và tiếng vọng 4D chỉ nằm trong phần này của bề ngang tường.
+            100% = trải hết 10m. Để <b>45%</b> thì visual dồn về giữa — đúng chỗ hai tường chính.
+          </div>
           <div class="row">
             <label class="lbl">Mượt</label>
             <input type="range" id="smooth" min="0" max="0.9" step="0.05" />
@@ -143,13 +146,19 @@
           </div>
           <div class="row">
             <label class="lbl">Ngưỡng chụm</label>
-            <input type="range" id="pinch" min="0.2" max="0.6" step="0.01" />
+            <input type="range" id="pinch" min="0.2" max="0.8" step="0.01" />
             <div class="val mono" id="pinchVal"></div>
           </div>
-          <div class="note">Chụm khó ăn → tăng. Tự động vẽ khi chưa chụm → giảm.</div>
+          <div class="note">
+            Chụm khó ăn → tăng. Tự động vẽ khi chưa chụm → giảm. Số đo thật: chạm hẳn 0.06 ·
+            cách 3cm 0.30 · <b>nắm đấm 0.50</b> · tay thả lỏng 0.73. Vượt 0.50 là bắt đầu lấn sang nắm đấm.
+          </div>
+          <div class="row">
+            <button id="btnCalib" class="wide">chỉnh tự động — chụm tay giữ 3 giây</button>
+          </div>
           <div class="row">
             <label class="lbl">Giữ nắm đấm</label>
-            <input type="range" id="fistHold" min="1" max="6" step="0.5" />
+            <input type="range" id="fistHold" min="0.3" max="4" step="0.1" />
             <div class="val mono" id="fistHoldVal"></div>
           </div>
           <div class="note">Thời gian giữ nắm đấm để sang chiều kế tiếp. Vòng tròn trên tường chạy đủ là đổi.</div>

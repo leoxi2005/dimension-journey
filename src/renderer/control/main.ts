@@ -3,7 +3,7 @@
 // camera, MediaPipe, và âm thanh. Mọi thay đổi đều gửi Action lên main; main
 // broadcast lại nên cửa sổ chiếu + luồng Spout/NDI luôn khớp.
 // ============================================================================
-import { AppState, HandFrame, Stage, SpoutStatus, NdiStatus, KinectStatus } from '../../shared/types'
+import { AppState, HandFrame, SecondHand, Stage, SpoutStatus, NdiStatus, KinectStatus } from '../../shared/types'
 import { STAGES } from '../shared/stages'
 import { HandTracker } from './tracker'
 import { AudioEngine } from './audio'
@@ -172,6 +172,12 @@ function wire(): void {
     void tracker?.openCamera(id)
   }
   $('btnRecam').onclick = (): void => void listCameras()
+  $('btnCalib').onclick = (): void => {
+    const b = $('btnCalib')
+    b.textContent = 'chụm tay và giữ…'
+    b.classList.add('on')
+    tracker?.startCalibration(3)
+  }
 
   const range = (id: string, apply: (v: number) => void): void => {
     ;($(id) as HTMLInputElement).oninput = (e): void => apply(+(e.target as HTMLInputElement).value)
@@ -273,8 +279,8 @@ async function listCameras(): Promise<void> {
 }
 
 // ---------------------------------------------------------------- vòng chạy
-function onHand(h: HandFrame): void {
-  window.dj.sendHand(h)
+function onHand(h: HandFrame, second: SecondHand): void {
+  window.dj.sendHand({ primary: h, second })
   // Lưới an toàn: nếu ctx vẫn bị treo (autoplay policy đổi, thiết bị ra âm thanh
   // đổi giữa chừng), lần đầu thấy tay là mở lại.
   if (h.present && !audio.ready) {
@@ -353,6 +359,12 @@ async function boot(): Promise<void> {
   )
   // Móc chẩn đoán (giống __djScene) — soi trạng thái cử chỉ thật khi ở venue.
   ;(window as unknown as { __djTracker: HandTracker }).__djTracker = tracker
+  tracker.onCalibrated = (v): void => {
+    window.dj.send({ type: 'setInput', patch: { pinchThreshold: +v.toFixed(2) } })
+    const b = $('btnCalib')
+    b.textContent = `đã đặt ngưỡng ${v.toFixed(2)} — chỉnh lại`
+    b.classList.remove('on')
+  }
   await tracker.init()
   if (state.input.source === 'camera') await tracker.openCamera(state.input.deviceId)
   await listCameras()

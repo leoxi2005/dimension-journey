@@ -8,7 +8,7 @@
 import { join } from 'path'
 import { readFileSync, existsSync } from 'fs'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { AppState, Action, HandFrame, Output } from '../shared/types'
+import { AppState, Action, HandsFrame, Output } from '../shared/types'
 import { initialState, reduce } from './store'
 import { WindowManager } from './windows'
 import { SpoutService } from './spout'
@@ -140,7 +140,7 @@ function wireIpc(): void {
   // Dữ liệu tay: Control -> main -> các cửa sổ hiển thị. Gói nhỏ (< 100 byte)
   // nên 60fps qua IPC không đáng kể; đổi lại camera + MediaPipe chỉ chạy ĐÚNG
   // MỘT chỗ thay vì mỗi cửa sổ một bản (3 bản MediaPipe sẽ giết CPU).
-  ipcMain.on('dj:hand', (_e, h: HandFrame) => {
+  ipcMain.on('dj:hand', (_e, h: HandsFrame) => {
     for (const w of outputWindows()) {
       if (!w.isDestroyed()) w.webContents.send('dj:hand', h)
     }

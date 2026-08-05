@@ -5,7 +5,7 @@
 // tồn tại đúng một bản.
 // ============================================================================
 import { WallScene } from './scene'
-import { AppState, HandFrame } from '../../shared/types'
+import { AppState, HandsFrame } from '../../shared/types'
 import { STAGES } from '../shared/stages'
 
 const canvas = document.getElementById('gl') as HTMLCanvasElement
@@ -55,12 +55,12 @@ async function boot(): Promise<void> {
     applyHud(s)
   })
 
-  window.dj.onHand((h: HandFrame) => {
+  window.dj.onHand((h: HandsFrame) => {
     scene?.setHand(h)
     // Vòng tròn "shifting dimension" khi giữ nắm đấm.
-    const show = h.ring > 0.03
+    const show = h.primary.ring > 0.03
     ringEl.style.display = show ? 'flex' : 'none'
-    if (show) ringArc.setAttribute('stroke-dashoffset', String(351.86 * (1 - h.ring)))
+    if (show) ringArc.setAttribute('stroke-dashoffset', String(351.86 * (1 - h.primary.ring)))
   })
 
   // Chuột: đường dự phòng, dùng được ngay trên cửa sổ chiếu khi camera hỏng.

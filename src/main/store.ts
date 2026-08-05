@@ -27,8 +27,8 @@ export function initialState(): AppState {
     // giật cả show. Chỉ bật khi Resolume nằm ở máy khác.
     ndi: { running: false, fps: 30, scale: 100 },
     input: {
-      source: 'camera', deviceId: '', reach: 100, smooth: 0.3,
-      mirror: true, fistHold: 1, pinchThreshold: 0.36, kinectPort: 9010
+      source: 'camera', deviceId: '', reach: 45, smooth: 0.3,
+      mirror: true, fistHold: 0.5, pinchThreshold: 0.55, kinectPort: 9010
     },
     look: {
       hFov: 100, hud: true, hudScale: 1.8, bloom: true, bloomStrength: 0.85,

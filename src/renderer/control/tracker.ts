@@ -12,7 +12,7 @@
 //   'kinect' — ảnh hồng ngoại do Kinect bridge đẩy qua WebSocket. Phòng chiếu
 //              tối om thì webcam RGB mù, còn Kinect tự rọi IR nên vẫn thấy tay.
 // ============================================================================
-import { HandFrame, AppState } from '../../shared/types'
+import { HandFrame, SecondHand, AppState } from '../../shared/types'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Landmark = { x: number; y: number; z: number }
@@ -71,7 +71,7 @@ class OneEuro {
 }
 
 export interface TrackerCallbacks {
-  onHand: (h: HandFrame) => void
+  onHand: (primary: HandFrame, second: SecondHand) => void
   /** Số đo cử chỉ sống, hiện dưới ô xem trước để chỉnh ngưỡng tại venue. */
   onDebug: (text: string) => void
   onStatus: (text: string, tone: 'ok' | 'warn' | 'bad') => void
@@ -97,6 +97,29 @@ export class HandTracker {
   private dead = false
   private fx = new OneEuro()
   private fy = new OneEuro()
+  /** Nhãn tay (Left/Right) đã được giao việc VẼ. Giữ dính cho tới khi cả hai tay
+   *  rời khung một lúc — nếu đổi vai giữa chừng thì người dùng mất phương hướng. */
+  private drawLabel: string | null = null
+  private bothGone = 0
+  private loggedWorld = false
+  private secondPrev: SecondHand = { present: false, nx: 0.5, ny: 0.5 }
+  /** Giá trị chụm nhỏ nhất trong ~3s gần đây — để biết tay NGƯỜI DÙNG thật sự
+   *  chụm được tới đâu, thay vì mình ngồi đoán ngưỡng. */
+  private recentMin = 9
+  private recentMinAt = 0
+  private calibUntil = 0
+  private calibMin = 9
+  onCalibrated: ((value: number) => void) | null = null
+
+  /** Bắt đầu tự chỉnh: người dùng chụm tay giữ vài giây, app lấy mức chụm chặt
+   *  nhất đo được rồi đặt ngưỡng cao hơn mức đó một chút. */
+  startCalibration(seconds: number): void {
+    this.calibMin = 9
+    this.calibUntil = performance.now() + seconds * 1000
+  }
+  private second: SecondHand = { present: false, nx: 0.5, ny: 0.5 }
+  private sx = new OneEuro()
+  private sy = new OneEuro()
 
   /** Khung IR mới nhất từ Kinect bridge, đã vẽ sẵn vào canvas cho MediaPipe đọc. */
   private kinectCanvas = document.createElement('canvas')
@@ -149,7 +172,16 @@ export class HandTracker {
       mp.HandLandmarker.createFromOptions(resolver, {
         baseOptions: { modelAssetBuffer: new Uint8Array(model), delegate },
         runningMode: 'VIDEO',
-        numHands: 1
+        // HAI tay: tay xuất hiện trước lo vẽ, tay thứ hai lo xoay trường 5D.
+        numHands: 2,
+        // Ba ngưỡng này trước đây để MẶC ĐỊNH 0.5 — chặt quá cho một tác phẩm
+        // tương tác. Hạ ngưỡng BÁM (tracking/presence) làm MediaPipe lì hơn: tay
+        // hơi mờ, hơi nghiêng, hay bị chính mình che thì vẫn bám tiếp thay vì
+        // buông ra rồi phải dò lại từ đầu — mỗi lần buông là một lần nét đứt.
+        // Ngưỡng PHÁT HIỆN giữ cao hơn để không bắt nhầm vật thể thành bàn tay.
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.35,
+        minTrackingConfidence: 0.35
       })
     try {
       return await make('GPU')
@@ -294,10 +326,51 @@ export class HandTracker {
     } catch {
       return
     }
-    const lms: Landmark[] | undefined = result?.landmarks?.[0]
-    const world: Landmark[] | undefined = result?.worldLandmarks?.[0]
-    this.drawPreview(lms)
-    this.emit(lms, world, dt)
+    const all: Landmark[][] = result?.landmarks || []
+    const worlds: Landmark[][] = result?.worldLandmarks || []
+    // Nhãn tay của MediaPipe (Left/Right) là thứ ỔN ĐỊNH duy nhất giữa các frame
+    // — thứ tự trong mảng thì không. Dùng nó làm danh tính để giao việc.
+    const labels: string[] = (result?.handedness || []).map(
+      (h: any) => (h && h[0] && h[0].categoryName) || ''
+    )
+
+    if (all.length === 0) {
+      this.bothGone++
+      if (this.bothGone > 45) this.drawLabel = null // ~1.5s vắng cả hai tay thì giao lại vai
+    } else {
+      this.bothGone = 0
+      if (this.drawLabel === null) this.drawLabel = labels[0] || 'H0'
+    }
+
+    let pi = -1
+    for (let i = 0; i < all.length; i++) {
+      if ((labels[i] || 'H0') === this.drawLabel) { pi = i; break }
+    }
+    // Chỉ thấy một tay mà không khớp nhãn (MediaPipe đọc nhầm chiều) → vẫn cho vẽ,
+    // thà vẽ được còn hơn đứng im chờ đúng nhãn.
+    if (pi < 0 && all.length === 1) pi = 0
+    const si = all.findIndex((_, i) => i !== pi)
+
+    this.drawPreview(all, pi)
+    if (si >= 0) {
+      // Tay thứ hai cũng phải lọc nhiễu: nó lái cú xoay trường 5D, dữ liệu thô
+      // rung thì cả trường rung theo.
+      const raw = all[si][9]
+      const cut = 0.6 + (1 - Math.min(0.95, Math.max(0, this.state.input.smooth))) * 2.4
+      this.sx.setMinCutoff(cut)
+      this.sy.setMinCutoff(cut)
+      const ts = performance.now() / 1000
+      this.second = {
+        present: true,
+        nx: this.sx.filter(this.state.input.mirror ? 1 - raw.x : raw.x, ts),
+        ny: this.sy.filter(raw.y, ts)
+      }
+    } else {
+      this.second = { present: false, nx: 0.5, ny: 0.5 }
+      this.sx.reset()
+      this.sy.reset()
+    }
+    this.emit(pi >= 0 ? all[pi] : undefined, pi >= 0 ? worlds[pi] : undefined, dt)
   }
 
   private emit(lms: Landmark[] | undefined, world: Landmark[] | undefined, dt: number): void {
@@ -313,7 +386,7 @@ export class HandTracker {
         this.fx.reset()
         this.fy.reset()
           this.cb.onDebug('không thấy tay')
-        this.cb.onHand({ present: false, nx: 0.5, ny: 0.5, pinch: false, palm: false, fist: false, ring: 0, label: 'đưa tay vào khung' })
+        this.cb.onHand({ present: false, nx: 0.5, ny: 0.5, pinch: false, palm: false, fist: false, ring: 0, label: 'đưa tay vào khung' }, this.second)
       }
       return
     }
@@ -325,6 +398,14 @@ export class HandTracker {
     // KHÔNG bị co khi xoay cổ tay. Toạ độ ảnh thì bị, và đó chính là gốc của lỗi
     // nét đứt giữa chừng. Vị trí con trỏ vẫn lấy từ toạ độ ẢNH ở dưới, vì con trỏ
     // phải bám khung hình chứ không bám bàn tay.
+    if (!this.loggedWorld) {
+      this.loggedWorld = true
+      // Toàn bộ thang đo cử chỉ dựa trên worldLandmarks. Nếu thiếu thì rơi về
+      // toạ độ ảnh và mọi ngưỡng lệch đi — phải biết chắc, không đoán.
+      window.dj.log('tracking', world && world.length === 21
+        ? 'dùng worldLandmarks 3D (chuẩn, không đổi khi xoay tay)'
+        : 'THIẾU worldLandmarks — rơi về toạ độ ảnh, ngưỡng cử chỉ sẽ lệch')
+    }
     const g = world && world.length === 21 ? world : lms
     const gw = g[0]
     const ext = ([[8, 6], [12, 10], [16, 14], [20, 18]] as [number, number][])
@@ -334,29 +415,50 @@ export class HandTracker {
     const handScale = Math.max(d(g[0], g[5]), d(g[0], g[9]), d(g[0], g[13]), d(g[0], g[17]), 1e-6)
     const pinchD = d(g[4], g[8]) / handScale
 
-    // NGÓN TRỎ DUỖI HAY CUỘN — đây mới là thứ tách "chụm ngón" khỏi "nắm đấm".
-    // Nắm đấm cũng làm ngón cái nằm sát ngón trỏ, nên chỉ đo khoảng cách cái-trỏ
-    // là KHÔNG đủ: nắm tay sẽ bị hiểu thành chụm ngón, rồi tự khoá luôn việc nhận
-    // nắm tay (và còn vẽ ra nét). Tỉ lệ (đầu ngón → khớp gốc)/(tổng chiều dài đốt)
-    // ≈ 1 khi duỗi, ≈ 0.3 khi cuộn — không phụ thuộc cỡ tay.
-    const bones = d(g[5], g[6]) + d(g[6], g[7]) + d(g[7], g[8])
-    const straight = bones > 1e-6 ? d(g[5], g[8]) / bones : 1
-    const CURLED = 0.65
-    const STRAIGHT = 0.72 // khe hở giữa hai ngưỡng = vùng đệm, không cử chỉ nào ăn
+    // Phân biệt CHỤM với NẮM ĐẤM bằng "đầu ngón trỏ có tụt vào lòng bàn tay
+    // không", đo trên worldLandmarks nên không đổi khi xoay cổ tay.
+    //
+    // KHÔNG dùng "ngón trỏ có duỗi thẳng không" như bản trước: chụm CHẶT thì
+    // ngón trỏ phải cong lại để đầu ngón chạm ngón cái, độ duỗi tụt xuống ~0.66
+    // và rơi đúng vào vùng chết giữa hai ngưỡng — không ra cử chỉ nào. Chụm nhẹ
+    // thì ăn, chụm chặt thì không. Đo được, chính là lỗi "thử mấy lần mới vẽ được".
+    const reach = d(g[8], g[0]) / handScale
+
+    const now = performance.now()
+    if (pinchD < this.recentMin || now - this.recentMinAt > 3000) {
+      this.recentMin = pinchD
+      this.recentMinAt = now
+    }
+    if (this.calibUntil) {
+      if (pinchD < this.calibMin) this.calibMin = pinchD
+      if (now > this.calibUntil) {
+        this.calibUntil = 0
+        // Ngưỡng đặt cao hơn mức chụm chặt nhất 40% để còn dư địa cho tay run.
+        if (this.calibMin < 5) this.onCalibrated?.(Math.min(0.85, Math.max(0.25, this.calibMin * 1.4)))
+      }
+    }
 
     const thr = this.state.input.pinchThreshold
-    const fistNow = extCount === 0 && straight < CURLED
+    // Nắm đấm nhận bằng ĐỘ VƯƠN của đầu ngón trỏ, không dính gì tới ngưỡng chụm.
+    // Số đo thật: nắm đấm ~0.79 · chụm rất chặt ~1.00 · chụm thường 1.3-1.7.
+    // Tách rời như vậy thì ngưỡng chụm có nới rộng bao nhiêu cũng không bao giờ
+    // ăn tranh mất cú nắm đấm.
+    const fistNow = extCount === 0 && reach < 0.92
 
     if (fistNow) {
-      // Nắm đấm được ưu tiên và cắt luôn nét đang vẽ — không debounce, vì người
-      // ta nắm tay là có ý dừng vẽ.
+      // Nắm đấm cắt nét ngay, không debounce — nắm tay là có ý dừng vẽ.
       this.pinched = false
       this.pinchMiss = 0
-    } else if (pinchD < thr && straight > STRAIGHT) {
+    } else if (pinchD < thr) {
+      // Chỉ cần đầu ngón cái gần đầu ngón trỏ. Không đòi thêm điều kiện nào nữa:
+      // mỗi điều kiện phụ là một cách nữa để cử chỉ đúng bị từ chối.
       this.pinched = true
       this.pinchMiss = 0
-    } else if (this.pinched && (pinchD > thr * 1.45 || straight < CURLED)) {
-      // Chống rớt: phải thấy nhả liên tiếp vài frame mới thật sự nhấc bút.
+    } else if (this.pinched && pinchD > Math.min(thr * 1.6, 0.68)) {
+      // Kẹp mức nhả ở 0.68: bàn tay thả lỏng đo được ~0.73, để ngưỡng nhả bò lên
+      // sát đó thì tay buông xuôi cũng bị coi là vẫn đang vẽ.
+      // Nhả rộng tay hơn ngưỡng bắt (1.6×) và phải thấy liên tiếp 3 frame mới
+      // nhấc bút — giữ nét liền mạch khi tay hơi rung.
       this.pinchMiss++
       if (this.pinchMiss >= 3) this.pinched = false
     } else if (!this.pinched) {
@@ -366,8 +468,11 @@ export class HandTracker {
     const palm = extCount >= 4 && !this.pinched
 
     this.cb.onDebug(
-      `ngón duỗi ${extCount}/4 · chụm ${pinchD.toFixed(2)}/${thr.toFixed(2)} · trỏ ${straight.toFixed(2)}` +
+      `ngón duỗi ${extCount}/4 · chụm ${pinchD.toFixed(2)}/${thr.toFixed(2)}` +
+      ` (chặt nhất 3s: ${this.recentMin.toFixed(2)}) · với ${reach.toFixed(2)}` +
+      (this.calibUntil ? ' · ĐANG TỰ CHỈNH…' : '') +
       ` · ${fistNow ? 'NẮM ĐẤM' : this.pinched ? 'CHỤM' : palm ? 'XOÈ' : '—'}` +
+      (this.second.present ? ' · tay 2: XOAY' : '') +
       (world ? '' : ' · (world 3D thiếu)')
     )
 
@@ -421,10 +526,10 @@ export class HandTracker {
       palm, fist: fistNow,
       ring: this.ring,
       label
-    })
+    }, this.second)
   }
 
-  private drawPreview(lms: Landmark[] | undefined): void {
+  private drawPreview(all: Landmark[][], pi: number): void {
     const cv = this.preview
     const g = cv.getContext('2d')
     if (!g) return
@@ -442,23 +547,30 @@ export class HandTracker {
       g.restore()
       g.globalAlpha = 1
     }
-    if (!lms) return
     const mir = this.state.input.mirror
     const X = (p: Landmark): number => (mir ? 1 - p.x : p.x) * cv.width
     const Y = (p: Landmark): number => p.y * cv.height
-    g.strokeStyle = 'rgba(167,139,250,0.75)'
-    g.lineWidth = 1.5
-    g.beginPath()
-    for (const [a, b] of CONN) { g.moveTo(X(lms[a]), Y(lms[a])); g.lineTo(X(lms[b]), Y(lms[b])) }
-    g.stroke()
-    g.fillStyle = '#e9d5ff'
-    for (const p of lms) { g.beginPath(); g.arc(X(p), Y(p), 2, 0, 7); g.fill() }
-    const pc = this.pinched ? '#5ee6a8' : 'rgba(94,230,168,0.45)'
-    g.strokeStyle = pc
-    g.lineWidth = 2
-    g.beginPath(); g.moveTo(X(lms[4]), Y(lms[4])); g.lineTo(X(lms[8]), Y(lms[8])); g.stroke()
-    g.fillStyle = pc
-    for (const i of [4, 8]) { g.beginPath(); g.arc(X(lms[i]), Y(lms[i]), 4, 0, 7); g.fill() }
+    for (let h = 0; h < all.length; h++) {
+      const lms = all[h]
+      const isDraw = h === pi
+      // Tay VẼ màu tím, tay XOAY màu hổ phách — operator phải nhìn ra ngay tay
+      // nào đang giữ việc gì.
+      g.strokeStyle = isDraw ? 'rgba(167,139,250,0.8)' : 'rgba(245,192,68,0.7)'
+      g.lineWidth = 1.5
+      g.beginPath()
+      for (const [a, b] of CONN) { g.moveTo(X(lms[a]), Y(lms[a])); g.lineTo(X(lms[b]), Y(lms[b])) }
+      g.stroke()
+      g.fillStyle = isDraw ? '#e9d5ff' : '#f5c044'
+      for (const p of lms) { g.beginPath(); g.arc(X(p), Y(p), 2, 0, 7); g.fill() }
+      if (isDraw) {
+        const pc = this.pinched ? '#5ee6a8' : 'rgba(94,230,168,0.45)'
+        g.strokeStyle = pc
+        g.lineWidth = 2
+        g.beginPath(); g.moveTo(X(lms[4]), Y(lms[4])); g.lineTo(X(lms[8]), Y(lms[8])); g.stroke()
+        g.fillStyle = pc
+        for (const i of [4, 8]) { g.beginPath(); g.arc(X(lms[i]), Y(lms[i]), 4, 0, 7); g.fill() }
+      }
+    }
   }
 
   dispose(): void {

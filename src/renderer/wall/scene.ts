@@ -27,7 +27,7 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
-import { AppState, HandFrame, EMPTY_HAND, Stage } from '../../shared/types'
+import { AppState, HandsFrame, HandFrame, EMPTY_HAND, EMPTY_SECOND, SecondHand, Stage } from '../../shared/types'
 
 const HALF_H = 6.5 // nửa chiều cao thế giới — HẰNG SỐ, giữ mọi tỉ lệ pixel như bản gốc
 const REF_DIST = 14 // khoảng cách camera của bản gốc, dùng làm mốc quy đổi cỡ hạt
@@ -68,6 +68,8 @@ export class WallScene {
   private f: Framing
   private state: AppState
   private hand: HandFrame = { ...EMPTY_HAND }
+  private second: SecondHand = { ...EMPTY_SECOND }
+  private secondPrev: { x: number; y: number } | null = null
   private lastClearNonce = 0
   private lastStage: Stage = 0
   private lastHFov = 0
@@ -75,6 +77,8 @@ export class WallScene {
 
   private glowTex!: THREE.Texture
   private bgGroup = new THREE.Group()
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  private starShaders: any[] = []
   private strokeGroup = new THREE.Group()
   private stackGroup = new THREE.Group()
   private grid!: THREE.GridHelper
@@ -235,6 +239,7 @@ export class WallScene {
     const { dist, halfW } = this.f
     const tanH = halfW / dist
     const tanV = HALF_H / dist
+    this.starShaders = []
     const density = Math.max(0.25, this.state.look.starDensity / 100)
     const N = Math.min(24000, Math.round(1300 * (halfW / (HALF_H * 16 / 9)) * density))
 
@@ -264,16 +269,21 @@ export class WallScene {
         // đầu tường bị hụt sao.
         const z = -zSpan * Math.random()
         const d = dist - z
-        pos[i * 3] = (Math.random() * 2 - 1) * d * tanH * 1.02
-        pos[i * 3 + 1] = (Math.random() * 2 - 1) * d * tanV * 1.06
+        // Biên rộng hơn khung một chút để lúc trường trôi nhẹ không hở mép.
+        pos[i * 3] = (Math.random() * 2 - 1) * d * tanH * 1.10
+        pos[i * 3 + 1] = (Math.random() * 2 - 1) * d * tanV * 1.16
         pos[i * 3 + 2] = z
         const c = palette[(Math.random() * palette.length) | 0].clone()
           .multiplyScalar((0.3 + Math.random() * 0.55) * L.dim)
         col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b
       }
+      // Pha ngẫu nhiên mỗi sao, để chúng lấp lánh lệch nhau chứ không đập cùng nhịp.
+      const phase = new Float32Array(n)
+      for (let i = 0; i < n; i++) phase[i] = Math.random() * Math.PI * 2
       const geo = new THREE.BufferGeometry()
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
       geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
+      geo.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1))
       // sizeAttenuation TẮT: trường rộng 125 đơn vị nên góc màn hình xa camera
       // gấp 1.55 lần tâm — bật attenuation thì sao ở hai đầu tường tự nhỏ và tối
       // đi, ra đúng vệt sáng hình thấu kính. Tắt đi thì phủ đều tuyệt đối.
@@ -282,6 +292,21 @@ export class WallScene {
         map: this.glowTex, // không có map thì GL point ra hình VUÔNG, thấy rõ khi sao to
         transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false
       })
+      // Nhấp nháy làm trong VERTEX SHADER: mỗi sao một pha riêng, không tốn một
+      // phép tính CPU nào mỗi frame. Làm ở CPU thì phải nạp lại 21k float mỗi
+      // frame cho ~7000 sao, phí vô ích.
+      mat.onBeforeCompile = (shader): void => {
+        shader.uniforms.uTime = { value: 0 }
+        shader.vertexShader =
+          'attribute float aPhase;\nuniform float uTime;\n' +
+          shader.vertexShader.replace(
+            '#include <color_vertex>',
+            // Biên độ quanh 1.0 chứ không phải dưới 1: nếu để dải 0.45..1.0 thì
+            // trung bình chỉ còn 0.72, nền tối đi 27% so với lúc chưa nhấp nháy.
+            '#include <color_vertex>\n\tvColor *= 1.0 + 0.4 * sin(uTime * 1.6 + aPhase);'
+          )
+        this.starShaders.push(shader)
+      }
       const pts = new THREE.Points(geo, mat)
       pts.frustumCulled = false
       this.bgGroup.add(pts)
@@ -388,8 +413,11 @@ export class WallScene {
     }
   }
 
-  setHand(h: HandFrame): void {
-    this.hand = h
+  setHand(h: HandsFrame): void {
+    // Chống gói dữ liệu thiếu trường: nếu để undefined lọt vào thì applyHand ném
+    // lỗi MỖI FRAME và cửa sổ chiếu đứng hình giữa buổi diễn.
+    this.hand = h?.primary ?? { ...EMPTY_HAND }
+    this.second = h?.second ?? { ...EMPTY_SECOND }
   }
 
   /** Chuột — đường dự phòng khi camera hỏng giữa show. */
@@ -418,7 +446,7 @@ export class WallScene {
       this.prevPinch = false
       return
     }
-    const reach = Math.max(0.4, Math.min(1, this.state.input.reach / 100))
+    const reach = this.contentZone()
     // reach < 100% thu vùng với tới về giữa tường — bàn tay không quét nổi 10m
     // thì thà cho nó điều khiển đúng phần giữa còn hơn giật cục ở hai đầu.
     const nx = 0.5 + (h.nx - 0.5) * reach
@@ -426,14 +454,17 @@ export class WallScene {
     this.pointerTarget = this.screenToWorld(nx, ny)
     this.cursorActive = true
 
-    // Xoè bàn tay ở 5D = xoay trường.
-    if (h.palm && this.state.stage === 5 && !this.drawing) {
-      if (this.palmPrev) this.rotateStack((h.nx - this.palmPrev.x) * 1.6, (h.ny - this.palmPrev.y) * 1.6)
-      this.palmPrev = { x: h.nx, y: h.ny }
-      this.prevPinch = false
-      return
+    // Xoay trường 5D là việc của TAY THỨ HAI, không phải cử chỉ xoè của tay đang
+    // vẽ. Một tay kiêm cả vẽ lẫn xoay thì rất khó điều khiển: vừa nhấc bút xong
+    // bàn tay mở ra là trường đã bắt đầu quay.
+    if (this.second.present && this.state.stage === 5) {
+      if (this.secondPrev) {
+        this.rotateStack((this.second.nx - this.secondPrev.x) * 1.2, (this.second.ny - this.secondPrev.y) * 1.2)
+      }
+      this.secondPrev = { x: this.second.nx, y: this.second.ny }
+    } else {
+      this.secondPrev = null
     }
-    this.palmPrev = null
 
     if (h.pinch && !this.prevPinch) {
       this.pointer.copy(this.pointerTarget)
@@ -454,6 +485,12 @@ export class WallScene {
     }
     attr.needsUpdate = true
     this.liveGeo.setDrawRange(0, n)
+  }
+
+  /** Vùng nội dung: phần bề ngang tường mà nét vẽ và tiếng vọng được phép chiếm.
+   *  Hai tường chính nằm ở GIỮA nên visual phải dồn về giữa, không trải đủ 10m. */
+  private contentZone(): number {
+    return Math.max(0.2, Math.min(1, this.state.input.reach / 100))
   }
 
   /** Bán kính nét đã nhân hệ số dày. */
@@ -549,6 +586,9 @@ export class WallScene {
           const clone = this.makeSolidStroke(deep)
           if (!clone) continue
           clone.position.set(
+            // Tiếng vọng CỐ Ý rải khắp tường, KHÔNG bó theo vùng nội dung: 4D là
+            // "one form, echoing across spacetime" — dồn hết vào giữa thì mất ý.
+            // Nét gốc vẫn nằm giữa (theo tầm với), chỉ tiếng vọng mới toả ra.
             (Math.random() * 2 - 1) * this.f.halfW * 0.85,
             (Math.random() - 0.5) * HALF_H * 1.6,
             -this.f.dist * (0.05 + Math.random() * 0.5)
@@ -674,8 +714,12 @@ export class WallScene {
   }
 
   private makeLayerFrame(color: THREE.Color): THREE.Group {
-    const w = this.f.halfW * 0.94
-    const h = HALF_H * 0.88
+    // Tấm kính KHÔNG được rộng gần bằng tường. Bản trước để 94% bề ngang: xoay
+    // 24° là nửa gần của tấm vọt tới sát camera (z ~ +24 trên khoảng cách 52),
+    // phóng to lên thành tấm chéo khổng lồ tràn hết tường. Giữ nó là một tấm
+    // panel giữa khung, không phải một bức tường thứ hai.
+    const w = this.f.halfW * 0.42
+    const h = HALF_H * 0.8
     const pts = [
       new THREE.Vector3(-w, -h, 0), new THREE.Vector3(w, -h, 0),
       new THREE.Vector3(w, h, 0), new THREE.Vector3(-w, h, 0), new THREE.Vector3(-w, -h, 0)
@@ -697,8 +741,10 @@ export class WallScene {
    *  quay đến lúc nhìn nghiêng cạnh, trên tường chỉ còn một vạch sáng. */
   private rotateStack(dx: number, dy: number): void {
     if (this.state.stage !== 5) return
-    this.stackYaw = THREE.MathUtils.clamp(this.stackYaw + dx * 1.1, -0.42, 0.42)
-    this.stackPitch = THREE.MathUtils.clamp(this.stackPitch + dy * 1.4, -0.5, 0.5)
+    // Biên xoay nhỏ lại theo: tấm càng rộng thì cùng một góc xoay càng kéo cạnh
+    // gần về phía camera.
+    this.stackYaw = THREE.MathUtils.clamp(this.stackYaw + dx * 0.9, -0.22, 0.22)
+    this.stackPitch = THREE.MathUtils.clamp(this.stackPitch + dy * 1.1, -0.22, 0.22)
   }
 
   // ----------------------------------------------------------------- stages
@@ -765,9 +811,12 @@ export class WallScene {
     const stage = this.state.stage
     if (this.state.input.source !== 'mouse') this.applyHand()
 
-    // KHÔNG xoay bgGroup. Trường sao rộng ±62 đơn vị mà xoay quanh Z thì sau ~3
-    // phút hai đầu bị nâng quá nửa chiều cao khung (6.5) và trôi hẳn ra ngoài —
-    // đó là lý do nền không phủ liền. Chuyển động đã có sẵn từ camera drift.
+    // Trôi nhẹ theo hình sin — KHÔNG xoay. Xoay quanh Z thì trường rộng ±62 đơn
+    // vị sẽ bị nâng hai đầu quá nửa chiều cao khung và trôi hẳn ra ngoài (lỗi cũ).
+    // Trôi tịnh tiến biên nhỏ thì không bao giờ hở mép, vì sao đã rải dư biên.
+    this.bgGroup.position.x = Math.sin(t * 0.045) * this.f.halfW * 0.035
+    this.bgGroup.position.y = Math.cos(t * 0.031) * HALF_H * 0.06
+    for (const sh of this.starShaders) sh.uniforms.uTime.value = t
 
     // Trường sao hiện ở MỌI chiều, kể cả 0D — đúng như file gốc (bgGroup không
     // bao giờ bị ẩn hay làm mờ theo stage). Lý do 0D từng trông như một dải ngân
@@ -815,17 +864,21 @@ export class WallScene {
 
     this.stackGroup.visible = stage === 5
     if (stage === 5) {
-      if (!this.palmPrev) this.stackYaw += Math.sin(t * 0.16) * dt * 0.06 // thở nhẹ khi không ai chạm
+      if (!this.palmPrev) this.stackYaw += Math.sin(t * 0.16) * dt * 0.035 // thở nhẹ khi không ai chạm
       this.stackGroup.rotation.y += (this.stackYaw - this.stackGroup.rotation.y) * 0.06
       this.stackGroup.rotation.x += (this.stackPitch - this.stackGroup.rotation.x) * 0.06
     }
 
     if (this.pointerTarget) {
       // Làm mượt THẬT nằm ở bộ lọc One Euro trong tracker, nơi biết dấu thời gian
-      // của từng frame camera. Ở đây chỉ nội suy 30Hz (camera) lên 60Hz (màn hình)
-      // cho đỡ giật bậc thang — nên hệ số cố định và cao, không lấy theo slider
-      // "mượt" nữa (lerp chồng lên lọc chỉ tổ thêm trễ).
-      this.pointer.lerp(this.pointerTarget, 0.65)
+      // của từng frame camera. Ở đây chỉ nội suy lên tần số màn hình cho đỡ giật
+      // bậc thang.
+      //
+      // Hệ số phải CHUẨN HOÁ THEO dt. Để cố định 0.65 mỗi frame thì cửa sổ chiếu
+      // (60fps) và cửa sổ offscreen của Spout (có thể 30fps) làm mượt khác nhau
+      // → nét trên tường KHÁC nét operator đang nhìn. Cùng một mốc 60fps thì hai
+      // bên luôn khớp, dù chạy ở tốc độ nào.
+      this.pointer.lerp(this.pointerTarget, 1 - Math.pow(1 - 0.7, Math.min(3, dt * 60)))
       this.cursor.position.copy(this.pointer)
     }
     this.cursor.visible = this.cursorActive && !!this.pointerTarget
