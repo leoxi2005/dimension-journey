@@ -32,6 +32,8 @@ import { AppState, HandFrame, EMPTY_HAND, Stage } from '../../shared/types'
 const HALF_H = 6.5 // nửa chiều cao thế giới — HẰNG SỐ, giữ mọi tỉ lệ pixel như bản gốc
 const REF_DIST = 14 // khoảng cách camera của bản gốc, dùng làm mốc quy đổi cỡ hạt
 const MAX_TEX = 16384
+const MAX_STROKE_PTS = 900 // sức chứa buffer nét đang vẽ
+const MAX_TRAIL = 2400     // sức chứa buffer vệt sáng
 
 interface Framing {
   dist: number
@@ -150,6 +152,14 @@ export class WallScene {
     this.cursor.visible = false
     this.scene.add(this.cursor)
 
+    // Nét đang vẽ. KHÔNG dùng setFromPoints: lần gọi đầu tiên (lúc đó 0 điểm)
+    // tạo ra buffer count=0, mọi lần sau chỉ ghi được đúng 0 điểm và three chỉ
+    // in cảnh báo — nét live sẽ không bao giờ hiện. Cấp phát sẵn sức chứa tối
+    // đa rồi điều khiển bằng drawRange.
+    this.liveGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_STROKE_PTS * 3), 3))
+    this.liveGeo.setDrawRange(0, 0)
+    this.liveGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7)
+    this.liveGeo.computeBoundingSphere = (): void => { /* giữ quả cầu cố định */ }
     this.liveLine = new THREE.Line(
       this.liveGeo,
       new THREE.LineBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })
@@ -157,6 +167,11 @@ export class WallScene {
     this.liveLine.frustumCulled = false
     this.scene.add(this.liveLine)
 
+    // Vệt sáng cũng cấp phát sẵn: tạo BufferAttribute mới mỗi frame ở 60fps là
+    // rác cho GC ngay giữa show.
+    this.trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL * 3), 3))
+    this.trailGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL * 3), 3))
+    this.trailGeo.setDrawRange(0, 0)
     this.trailPoints = new THREE.Points(
       this.trailGeo,
       new THREE.PointsMaterial({ size: 0.42, map: this.glowTex, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
@@ -403,6 +418,18 @@ export class WallScene {
     this.prevPinch = h.pinch
   }
 
+  /** Ghi nét đang vẽ vào buffer cấp phát sẵn, điều khiển bằng drawRange. */
+  private setLive(pts: THREE.Vector3[]): void {
+    const attr = this.liveGeo.getAttribute('position') as THREE.BufferAttribute
+    const arr = attr.array as Float32Array
+    const n = Math.min(pts.length, MAX_STROKE_PTS)
+    for (let i = 0; i < n; i++) {
+      arr[i * 3] = pts[i].x; arr[i * 3 + 1] = pts[i].y; arr[i * 3 + 2] = pts[i].z
+    }
+    attr.needsUpdate = true
+    this.liveGeo.setDrawRange(0, n)
+  }
+
   /** Bán kính nét đã nhân hệ số dày. */
   private sw(r: number): number {
     return r * Math.max(0.3, this.state.look.strokeScale)
@@ -438,19 +465,19 @@ export class WallScene {
     if (d < minStep) return
     const steps = Math.min(6, Math.ceil(d / (minStep * 2)))
     for (let i = 1; i <= steps; i++) this.addTrail(last.clone().lerp(p, i / steps))
-    if (pts.length < 900) pts.push(p.clone())
+    if (pts.length < MAX_STROKE_PTS) pts.push(p.clone())
   }
 
   private addTrail(p: THREE.Vector3): void {
     this.trail.push({ x: p.x, y: p.y, z: p.z, t: performance.now() / 1000 })
-    if (this.trail.length > 2400) this.trail.splice(0, this.trail.length - 2400)
+    if (this.trail.length > MAX_TRAIL) this.trail.splice(0, this.trail.length - MAX_TRAIL)
   }
 
   private endStroke(): void {
     this.drawing = false
     const pts = this.strokePts
     this.strokePts = []
-    this.liveGeo.setFromPoints([])
+    this.setLive([])
     const stage = this.state.stage
     if (stage === 0 || pts.length < 2) return
 
@@ -777,25 +804,31 @@ export class WallScene {
 
     if (this.drawing && stage !== 0 && this.strokePts.length > 1) {
       const pts = stage === 1 ? [this.strokePts[0], this.strokePts[this.strokePts.length - 1]] : this.strokePts
-      this.liveGeo.setFromPoints(pts)
+      this.setLive(pts)
     } else {
-      this.liveGeo.setFromPoints([])
+      this.setLive([])
     }
 
-    // Vệt sáng tan dần
+    // Vệt sáng tan dần. Đây mới là phản hồi live mà người vẽ nhìn thấy từ xa:
+    // liveLine chỉ dày đúng 1px vì WebGL không hỗ trợ linewidth, trên tường 10m
+    // coi như vô hình. Nên cho hạt vệt nở theo cùng hệ số dày nét.
+    ;(this.trailPoints.material as THREE.PointsMaterial).size = this.sw(0.42) * this.f.ptK
     const life = stage === 0 ? 0.45 : 0.6
     this.trail = this.trail.filter((p) => t - p.t < life)
-    const n = this.trail.length
-    const pos = new Float32Array(n * 3)
-    const col = new Float32Array(n * 3)
+    const n = Math.min(this.trail.length, MAX_TRAIL)
+    const posAttr = this.trailGeo.getAttribute('position') as THREE.BufferAttribute
+    const colAttr = this.trailGeo.getAttribute('color') as THREE.BufferAttribute
+    const pos = posAttr.array as Float32Array
+    const col = colAttr.array as Float32Array
     for (let i = 0; i < n; i++) {
       const p = this.trail[i]
       const a = Math.max(0, 1 - (t - p.t) / life)
       pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z
       col[i * 3] = 0.78 * a; col[i * 3 + 1] = 0.62 * a; col[i * 3 + 2] = 1.0 * a
     }
-    this.trailGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-    this.trailGeo.setAttribute('color', new THREE.BufferAttribute(col, 3))
+    posAttr.needsUpdate = true
+    colAttr.needsUpdate = true
+    this.trailGeo.setDrawRange(0, n)
 
     for (const e of this.echoes) {
       const k = Math.min(1, Math.max(0, (t - e.born) / 0.6))
