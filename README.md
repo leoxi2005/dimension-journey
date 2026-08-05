@@ -73,7 +73,8 @@ Kinect chỉ đóng vai **nguồn hình**.
 
 ## Đường ra
 
-**Spout** — cùng máy Windows với Resolume. Toàn bộ đi trên GPU: offscreen render với
+**Spout** — cùng máy Windows với Resolume. **Đã verify chạy thật vào Resolume Arena.**
+Toàn bộ đi trên GPU: offscreen render với
 `useSharedTexture`, lấy shared D3D11 handle, đẩy thẳng qua SpoutDX. Không đọc pixel về
 RAM, không nén. Trong Resolume thêm nguồn **Spout In → `DimensionWall`**.
 
@@ -162,9 +163,7 @@ Cửa sổ chiếu còn có `__djScene` trong DevTools để soi trạng thái t
 
 - **Sàn 3840×2160** — state và đường ra đã có sẵn (`DimensionFloor`), nhưng chưa có scene
   riêng cho sàn nên `main` cố tình chỉ đẩy tường ra Spout/NDI.
-- **Spout runtime chưa test trên máy thật** — mình không có Windows + Resolume để chạy thử.
-  Đường code kế thừa từ project DAY3 (đã hardened: tự dò DXGI adapter, keyed mutex, CPU
-  fallback khi Chromium không cấp shared texture). Bạn test và gửi lại `dimension.log` nếu lỗi.
+- ~~Spout runtime~~ — **ĐÃ CHẠY ĐƯỢC vào Resolume Arena trên máy thật (2026-08-05).**
 - **KinectBridge chưa chạy trên phần cứng thật** — nó đã BIÊN DỊCH được (CI build sẵn
   `KinectBridge.zip` vào release, và assembly Kinect lấy từ NuGet nên mọi API gọi tới
   đều được trình biên dịch xác nhận là có thật). Nhưng chưa ai cắm Kinect vào chạy thử.
