@@ -53,6 +53,13 @@ jobs:
           if ($b.Length -lt 2 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw "$p KHONG phai binary Windows (thiếu magic MZ)" }
           echo "SPOUT_ADDON=OK ($($b.Length) bytes, PE/MZ)"
 
+      # Bridge Kinect biên dịch với assembly Microsoft.Kinect LẤY TỪ NUGET, nên
+      # runner không cần cài Kinect SDK. Nhờ vậy lỗi biên dịch bị bắt ở đây thay
+      # vì đợi tới lúc ra venue mới lòi ra — và user tải về là chạy, khỏi cài
+      # Visual Studio chỉ để build.
+      - name: Build KinectBridge (C#)
+        run: dotnet build kinect-bridge/KinectBridge.csproj -c Release
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -72,11 +79,25 @@ jobs:
           }
           echo "PACKAGE=OK"
 
+      - name: Package KinectBridge
+        shell: pwsh
+        run: |
+          $out = "kinect-bridge/bin/Release/net48"
+          foreach ($f in @("KinectBridge.exe","Microsoft.Kinect.dll")) {
+            if (!(Test-Path "$out/$f")) { throw "THIEU $out/$f — bridge Kinect build khong ra" }
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $items = Get-ChildItem "$out" -Include *.exe,*.dll,*.config -File
+          Compress-Archive -Path $items -DestinationPath dist/KinectBridge.zip -Force
+          echo "KINECT_BRIDGE=OK"
+
       - name: Upload .exe (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: DIMENSION-JOURNEY-windows
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/KinectBridge.zip
           if-no-files-found: error
 
       - name: Publish Release (link tải công khai)
@@ -84,6 +105,13 @@ jobs:
         with:
           tag_name: win-latest
           name: DIMENSION JOURNEY — Windows build
-          body: "Tải file portable .exe bên dưới, chạy thẳng trên Windows (không cần cài Node)."
-          files: dist/*.exe
+          body: |
+            **DIMENSION JOURNEY** — tải `*-portable.exe` bên dưới, chạy thẳng trên Windows (không cần cài Node).
+
+            **KinectBridge.zip** — cầu nối Kinect v2, đã biên dịch sẵn. Giải nén rồi chạy
+            `KinectBridge.exe`. Máy cắm cảm biến cần cài **Kinect for Windows Runtime 2.0**
+            (chỉ runtime, không cần cả SDK). Xem `kinect-bridge/README.md`.
+          files: |
+            dist/*.exe
+            dist/KinectBridge.zip
           fail_on_unmatched_files: true

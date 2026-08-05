@@ -52,6 +52,8 @@ namespace KinectBridge
         private static int _sendEvery = 1;
 
         private static int _frameIndex;
+        private static int _sentCount;
+        private static int _dropCount;
         private static volatile bool _sending;     // không cho >1 frame bay cùng lúc
         private static byte[] _gray;               // đệm ảnh xám (IR)
         private static byte[] _bgra;               // đệm ảnh màu thô
@@ -78,15 +80,30 @@ namespace KinectBridge
                 Console.WriteLine("KHONG tim thay Kinect. Cam Kinect v2 vao cong USB 3.0 va cai Kinect SDK 2.0.");
                 return;
             }
+            // Cảm biến hay "có mặt" chậm vài giây sau khi Open(). Bám sự kiện này
+            // để operator biết là đang chờ phần cứng chứ không phải app treo.
+            _sensor.IsAvailableChanged += (s2, e2) =>
+                Console.WriteLine(e2.IsAvailable ? "Kinect: SAN SANG" : "Kinect: MAT KET NOI (kiem tra cong USB 3.0 / nguon dien)");
             _sensor.Open();
             var types = (wantIr ? FrameSourceTypes.Infrared : FrameSourceTypes.Color) | FrameSourceTypes.Body;
             _reader = _sensor.OpenMultiSourceFrameReader(types);
             _reader.MultiSourceFrameArrived += OnFrame;
             Console.WriteLine("Kinect da mo (nguon = " + (wantIr ? "IR" : "COLOR") + "). Dang ket noi " + _url + " …");
+            Console.WriteLine("Neu khong thay dong 'Kinect: SAN SANG' trong 10s: chua cai Kinect Runtime 2.0,");
+            Console.WriteLine("hoac cam vao cong USB 2.0 (Kinect v2 BAT BUOC USB 3.0 rieng).");
 
-            // Tự nối lại: app có thể khởi động sau bridge, hoặc restart giữa chừng.
+            // Tự nối lại + báo nhịp tim. Bridge chạy ở venue, người bấm nó không
+            // đọc code — nên phải tự nói ra nó đang sống hay chết.
+            int tick = 0;
             while (true)
             {
+                if (++tick % 4 == 0)
+                {
+                    int sent = System.Threading.Interlocked.Exchange(ref _sentCount, 0);
+                    int drop = System.Threading.Interlocked.Exchange(ref _dropCount, 0);
+                    if (_ws != null && _ws.State == WebSocketState.Open)
+                        Console.WriteLine("dang gui " + (sent / 2) + " fps" + (drop > 0 ? "  (bo " + drop + " frame vi gui khong kip)" : ""));
+                }
                 if (_ws == null || _ws.State != WebSocketState.Open)
                 {
                     try
@@ -117,7 +134,8 @@ namespace KinectBridge
             if (_frameIndex % _sendEvery != 0) return;
             // Bỏ frame khi frame trước chưa gửi xong — thà rớt frame còn hơn dồn
             // hàng đợi rồi trễ cả giây.
-            if (_sending || _ws == null || _ws.State != WebSocketState.Open) return;
+            if (_ws == null || _ws.State != WebSocketState.Open) return;
+            if (_sending) { System.Threading.Interlocked.Increment(ref _dropCount); return; }
 
             if (_source == "ir") SendInfrared(multi);
             else SendColor(multi);
@@ -209,6 +227,7 @@ namespace KinectBridge
                 _ws.SendAsync(new ArraySegment<byte>(payload), WebSocketMessageType.Binary, true, CancellationToken.None)
                    .ContinueWith(t => { _sending = false; });
             }
+            System.Threading.Interlocked.Increment(ref _sentCount);
         }
 
         /// <summary>Chuẩn hoá ushort IR về 8-bit theo công thức của Kinect SDK.</summary>
@@ -284,7 +303,9 @@ namespace KinectBridge
                 bmp.UnlockBits(data);
 
                 var ps = new EncoderParameters(1);
-                ps.Param[0] = new EncoderParameter(Encoder.Quality, _jpegQuality);
+                // Phải ghi đủ tên: `Encoder` trần bị nhập nhằng với System.Text.Encoder
+                // vì file này cũng `using System.Text` để lấy Encoding.UTF8.
+                ps.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, _jpegQuality);
                 using (var ms = new MemoryStream())
                 {
                     bmp.Save(ms, GetJpegCodec(), ps);

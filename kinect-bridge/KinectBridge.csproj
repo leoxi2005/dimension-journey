@@ -8,16 +8,25 @@
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>KinectBridge</AssemblyName>
     <RootNamespace>KinectBridge</RootNamespace>
+    <!-- Gom Microsoft.Kinect.dll ra cạnh .exe để copy đi đâu cũng chạy. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="System.Drawing" />
-    <Reference Include="System.Net.Http" />
-    <!-- Đường dẫn mặc định khi cài Kinect for Windows SDK 2.0. Sửa lại nếu bạn
-         cài chỗ khác. -->
-    <Reference Include="Microsoft.Kinect">
-      <HintPath>C:\Program Files\Microsoft SDKs\Kinect\v2.0_1409\Assemblies\Microsoft.Kinect.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lấy assembly Kinect từ NuGet thay vì trỏ vào chỗ cài SDK. Nhờ vậy build
+         được trên máy KHÔNG có Kinect SDK — kể cả runner CI và cả macOS — nên
+         lỗi biên dịch bị bắt ngay thay vì đợi tới lúc ra venue mới lòi ra.
+         (Lúc CHẠY thì vẫn cần Kinect Runtime 2.0 trên máy cắm cảm biến.) -->
+    <PackageReference Include="Microsoft.Kinect" Version="2.0.1410.19000" />
+    <!-- Reference assemblies của .NET Framework 4.8: cho phép biên dịch net48
+         trên máy không phải Windows. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 </Project>

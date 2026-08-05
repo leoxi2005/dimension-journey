@@ -165,4 +165,6 @@ Cửa sổ chiếu còn có `__djScene` trong DevTools để soi trạng thái t
 - **Spout runtime chưa test trên máy thật** — mình không có Windows + Resolume để chạy thử.
   Đường code kế thừa từ project DAY3 (đã hardened: tự dò DXGI adapter, keyed mutex, CPU
   fallback khi Chromium không cấp shared texture). Bạn test và gửi lại `dimension.log` nếu lỗi.
-- **KinectBridge chưa biên dịch thử** — cần Windows + Kinect SDK 2.0.
+- **KinectBridge chưa chạy trên phần cứng thật** — nó đã BIÊN DỊCH được (CI build sẵn
+  `KinectBridge.zip` vào release, và assembly Kinect lấy từ NuGet nên mọi API gọi tới
+  đều được trình biên dịch xác nhận là có thật). Nhưng chưa ai cắm Kinect vào chạy thử.
