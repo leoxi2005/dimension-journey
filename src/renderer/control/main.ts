@@ -347,6 +347,7 @@ async function boot(): Promise<void> {
         setDot('trackDot', tone)
         window.dj.log('tracking', text)
       },
+      onDebug: (text) => { $('gestDebug').textContent = text },
       onStageAdvance: () => window.dj.send({ type: 'nextStage' })
     }
   )

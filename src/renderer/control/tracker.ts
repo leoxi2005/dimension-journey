@@ -72,6 +72,8 @@ class OneEuro {
 
 export interface TrackerCallbacks {
   onHand: (h: HandFrame) => void
+  /** Số đo cử chỉ sống, hiện dưới ô xem trước để chỉnh ngưỡng tại venue. */
+  onDebug: (text: string) => void
   onStatus: (text: string, tone: 'ok' | 'warn' | 'bad') => void
   onStageAdvance: () => void
 }
@@ -293,11 +295,12 @@ export class HandTracker {
       return
     }
     const lms: Landmark[] | undefined = result?.landmarks?.[0]
+    const world: Landmark[] | undefined = result?.worldLandmarks?.[0]
     this.drawPreview(lms)
-    this.emit(lms, dt)
+    this.emit(lms, world, dt)
   }
 
-  private emit(lms: Landmark[] | undefined, dt: number): void {
+  private emit(lms: Landmark[] | undefined, world: Landmark[] | undefined, dt: number): void {
     if (!lms) {
       this.handSeen = Math.max(0, this.handSeen - 1)
       if (this.handSeen === 0) {
@@ -309,33 +312,51 @@ export class HandTracker {
         // Không reset thì tay bước vào khung sẽ bị kéo lê một vệt từ chỗ cũ.
         this.fx.reset()
         this.fy.reset()
+          this.cb.onDebug('không thấy tay')
         this.cb.onHand({ present: false, nx: 0.5, ny: 0.5, pinch: false, palm: false, fist: false, ring: 0, label: 'đưa tay vào khung' })
       }
       return
     }
     this.handSeen = 4
 
-    const w = lms[0]
     const d = (a: Landmark, b: Landmark): number => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0))
+
+    // Đo cử chỉ trên worldLandmarks — toạ độ 3D thật (mét) do MediaPipe dựng lại,
+    // KHÔNG bị co khi xoay cổ tay. Toạ độ ảnh thì bị, và đó chính là gốc của lỗi
+    // nét đứt giữa chừng. Vị trí con trỏ vẫn lấy từ toạ độ ẢNH ở dưới, vì con trỏ
+    // phải bám khung hình chứ không bám bàn tay.
+    const g = world && world.length === 21 ? world : lms
+    const gw = g[0]
     const ext = ([[8, 6], [12, 10], [16, 14], [20, 18]] as [number, number][])
-      .map(([tip, pip]) => d(lms[tip], w) > d(lms[pip], w) * 1.08)
+      .map(([tip, pip]) => d(g[tip], gw) > d(g[pip], gw) * 1.08)
     const extCount = ext.filter(Boolean).length
 
-    // Thước chuẩn hoá phải BỀN VỚI XOAY TAY. Bản cũ chỉ lấy d(cổ tay, đốt giữa):
-    // xoay cổ tay là đoạn đó ngắn lại trong hình chiếu, pinchD phình lên và cú
-    // chụm bị coi như đã nhả → nét đứt ngay giữa lúc đang vẽ vòng. Lấy đoạn DÀI
-    // NHẤT trong bốn đốt bàn tay thì hình chiếu ổn định hơn nhiều.
-    const handScale = Math.max(d(lms[0], lms[5]), d(lms[0], lms[9]), d(lms[0], lms[13]), d(lms[0], lms[17]), 0.001)
-    const pinchD = d(lms[4], lms[8]) / handScale
+    const handScale = Math.max(d(g[0], g[5]), d(g[0], g[9]), d(g[0], g[13]), d(g[0], g[17]), 1e-6)
+    const pinchD = d(g[4], g[8]) / handScale
+
+    // NGÓN TRỎ DUỖI HAY CUỘN — đây mới là thứ tách "chụm ngón" khỏi "nắm đấm".
+    // Nắm đấm cũng làm ngón cái nằm sát ngón trỏ, nên chỉ đo khoảng cách cái-trỏ
+    // là KHÔNG đủ: nắm tay sẽ bị hiểu thành chụm ngón, rồi tự khoá luôn việc nhận
+    // nắm tay (và còn vẽ ra nét). Tỉ lệ (đầu ngón → khớp gốc)/(tổng chiều dài đốt)
+    // ≈ 1 khi duỗi, ≈ 0.3 khi cuộn — không phụ thuộc cỡ tay.
+    const bones = d(g[5], g[6]) + d(g[6], g[7]) + d(g[7], g[8])
+    const straight = bones > 1e-6 ? d(g[5], g[8]) / bones : 1
+    const CURLED = 0.65
+    const STRAIGHT = 0.72 // khe hở giữa hai ngưỡng = vùng đệm, không cử chỉ nào ăn
+
     const thr = this.state.input.pinchThreshold
-    // Trễ hai ngưỡng + chống rớt: phải thấy nhả liên tiếp vài frame mới thật sự
-    // nhấc bút. Một frame nhiễu không được phép cắt nét làm đôi.
-    // (Bỏ hẳn điều kiện indexReach của bản gốc — nó cũng co lại khi xoay tay,
-    // là thủ phạm thứ hai làm nét đứt.)
-    if (pinchD < thr) {
+    const fistNow = extCount === 0 && straight < CURLED
+
+    if (fistNow) {
+      // Nắm đấm được ưu tiên và cắt luôn nét đang vẽ — không debounce, vì người
+      // ta nắm tay là có ý dừng vẽ.
+      this.pinched = false
+      this.pinchMiss = 0
+    } else if (pinchD < thr && straight > STRAIGHT) {
       this.pinched = true
       this.pinchMiss = 0
-    } else if (this.pinched && pinchD > thr * 1.45) {
+    } else if (this.pinched && (pinchD > thr * 1.45 || straight < CURLED)) {
+      // Chống rớt: phải thấy nhả liên tiếp vài frame mới thật sự nhấc bút.
       this.pinchMiss++
       if (this.pinchMiss >= 3) this.pinched = false
     } else if (!this.pinched) {
@@ -343,7 +364,12 @@ export class HandTracker {
     }
 
     const palm = extCount >= 4 && !this.pinched
-    const fistNow = extCount === 0 && !this.pinched
+
+    this.cb.onDebug(
+      `ngón duỗi ${extCount}/4 · chụm ${pinchD.toFixed(2)}/${thr.toFixed(2)} · trỏ ${straight.toFixed(2)}` +
+      ` · ${fistNow ? 'NẮM ĐẤM' : this.pinched ? 'CHỤM' : palm ? 'XOÈ' : '—'}` +
+      (world ? '' : ' · (world 3D thiếu)')
+    )
 
     // Đầu bút = trung điểm ngón cái + ngón trỏ.
     let nx = (lms[4].x + lms[8].x) / 2
