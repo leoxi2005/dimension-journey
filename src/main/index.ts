@@ -39,8 +39,10 @@ const spout = new SpoutService()
 const ndi = new NdiService()
 const kinect = new KinectBridge()
 
-// Sàn để Phase 2. Hiện tại chỉ tường được đẩy ra Spout/NDI.
-const streamedOutputs = (): Output[] => state.outputs.filter((o) => o.key === 'wall')
+// Bề mặt nào có cờ send thì mới đẩy ra Spout/NDI. Mỗi bề mặt là một lần render
+// offscreen nữa, nên bật sàn là gần gấp đôi tải GPU — phải để người vận hành chủ
+// động bật, không bật ngầm.
+const streamedOutputs = (): Output[] => state.outputs.filter((o) => o.send)
 
 function allWindows(): BrowserWindow[] {
   return [...wm.getAll(), ...spout.broadcastWindows(), ...ndi.broadcastWindows()]

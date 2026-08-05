@@ -8,11 +8,11 @@ import { AppState, Action, Stage, Output } from '../shared/types'
 // Số chốt cho Bali Day 3: tường 10350×1080. Sàn 3840×2160 để dành, mặc định tắt.
 const WALL: Output = {
   key: 'wall', stream: 'DimensionWall', resW: 10350, resH: 1080,
-  open: false, display: 0, mode: 'windowed'
+  open: false, display: 0, mode: 'windowed', send: true
 }
 const FLOOR: Output = {
   key: 'floor', stream: 'DimensionFloor', resW: 3840, resH: 2160,
-  open: false, display: 0, mode: 'windowed'
+  open: false, display: 0, mode: 'windowed', send: false
 }
 
 export function initialState(): AppState {
@@ -30,6 +30,7 @@ export function initialState(): AppState {
       source: 'camera', deviceId: '', reach: 45, smooth: 0.3,
       mirror: true, fistHold: 0.5, pinchThreshold: 0.55, kinectPort: 9010
     },
+    floor: { rotation: 0, brightness: 85 },
     look: {
       hFov: 100, hud: true, hudScale: 1.8, bloom: true, bloomStrength: 0.85,
       starDensity: 100, strokeScale: 1.8
@@ -73,6 +74,8 @@ export function reduce(s: AppState, a: Action): AppState {
       return { ...s, input: { ...s.input, ...a.patch } }
     case 'setLook':
       return { ...s, look: { ...s.look, ...a.patch } }
+    case 'setFloor':
+      return { ...s, floor: { ...s.floor, ...a.patch } }
     default:
       return s
   }

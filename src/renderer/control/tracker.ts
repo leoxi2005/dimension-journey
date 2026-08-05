@@ -91,8 +91,8 @@ export class HandTracker {
   private handSeen = 0
   private fistTime = 0
   private fistArmed = true
-  private fistMiss = 0   // số frame liên tiếp KHÔNG thấy nắm đấm
-  private pinchMiss = 0  // số frame liên tiếp thấy nhả chụm
+  private fistMiss = 0   // GIÂY liên tiếp không thấy nắm đấm
+  private pinchMiss = 0  // GIÂY liên tiếp thấy nhả chụm
   private ring = 0
   private dead = false
   private fx = new OneEuro()
@@ -102,6 +102,12 @@ export class HandTracker {
   private drawLabel: string | null = null
   private bothGone = 0
   private loggedWorld = false
+  private lastEmit = 0
+  /** Nhịp nhận diện THẬT (lần/giây). Đây là con số quyết định cảm giác nhạy —
+   *  không phải fps màn hình. */
+  fps = 0
+  camInfo = ''
+  delegate = ''
   private secondPrev: SecondHand = { present: false, nx: 0.5, ny: 0.5 }
   /** Giá trị chụm nhỏ nhất trong ~3s gần đây — để biết tay NGƯỜI DÙNG thật sự
    *  chụm được tới đâu, thay vì mình ngồi đoán ngưỡng. */
@@ -184,9 +190,15 @@ export class HandTracker {
         minTrackingConfidence: 0.35
       })
     try {
-      return await make('GPU')
-    } catch {
-      // Máy không cho WebGL trong worker của MediaPipe → CPU vẫn đủ cho 1 tay.
+      const l = await make('GPU')
+      this.delegate = 'GPU'
+      window.dj.log('tracking', 'MediaPipe chạy trên GPU')
+      return l
+    } catch (e) {
+      // Máy không cho WebGL trong worker của MediaPipe → CPU chậm hơn nhiều, và
+      // chậm là kém nhạy. Phải ghi ra để biết mà xử lý.
+      this.delegate = 'CPU'
+      window.dj.log('tracking', `MediaPipe RƠI VỀ CPU (chậm hơn): ${(e as Error).message}`)
       return await make('CPU')
     }
   }
@@ -207,7 +219,16 @@ export class HandTracker {
       this.video.autoplay = true
       this.video.srcObject = this.stream
       await this.video.play()
-      this.cb.onStatus('camera đang chạy', 'ok')
+      const tr0 = this.stream.getVideoTracks()[0]
+      const st = tr0 && tr0.getSettings ? tr0.getSettings() : ({} as MediaTrackSettings)
+      this.camInfo = `${st.width || '?'}×${st.height || '?'} @${Math.round(st.frameRate || 0)}fps`
+      // fps camera là con số quyết định cảm giác nhạy. Webcam Windows hay chỉ cho
+      // 30fps, và tụt còn 15fps khi phòng thiếu sáng — phải biết chắc, không đoán.
+      window.dj.log('camera', `${tr0 ? tr0.label : '?'} — ${this.camInfo}`)
+      if ((st.frameRate || 0) < 25) {
+        window.dj.log('camera', `CẢNH BÁO: camera chỉ ${Math.round(st.frameRate || 0)}fps — cử chỉ sẽ kém nhạy. Thêm đèn hoặc đổi webcam 60fps.`)
+      }
+      this.cb.onStatus(`camera đang chạy · ${this.camInfo}`, 'ok')
     } catch (e) {
       this.cb.onStatus(`không mở được camera: ${(e as Error).message}`, 'bad')
     }
@@ -373,7 +394,16 @@ export class HandTracker {
     this.emit(pi >= 0 ? all[pi] : undefined, pi >= 0 ? worlds[pi] : undefined, dt)
   }
 
-  private emit(lms: Landmark[] | undefined, world: Landmark[] | undefined, dt: number): void {
+  private emit(lms: Landmark[] | undefined, world: Landmark[] | undefined, _dtDisplay: number): void {
+    // Đo thời gian THẬT giữa hai frame CAMERA. KHÔNG dùng dt của vòng lặp màn hình:
+    // emit chỉ chạy khi có frame camera mới, nên cộng dt màn hình vào là bộ đếm
+    // chạy theo tỉ lệ (fps camera / fps màn hình). Mac camera 60fps thì trùng khớp
+    // và mọi thứ có vẻ đúng; Windows webcam 30fps thì chậm gấp ĐÔI, 15fps (phòng
+    // thiếu sáng, camera tự kéo dài phơi sáng) thì chậm gấp BỐN.
+    const tNow = performance.now()
+    const dt = this.lastEmit ? Math.min(0.25, (tNow - this.lastEmit) / 1000) : 1 / 30
+    this.lastEmit = tNow
+    this.fps = this.fps ? this.fps * 0.9 + (1 / Math.max(dt, 1e-3)) * 0.1 : 1 / dt
     if (!lms) {
       this.handSeen = Math.max(0, this.handSeen - 1)
       if (this.handSeen === 0) {
@@ -468,7 +498,7 @@ export class HandTracker {
     const palm = extCount >= 4 && !this.pinched
 
     this.cb.onDebug(
-      `ngón duỗi ${extCount}/4 · chụm ${pinchD.toFixed(2)}/${thr.toFixed(2)}` +
+      `nhận diện ${Math.round(this.fps)}/s ${this.delegate} · ngón duỗi ${extCount}/4 · chụm ${pinchD.toFixed(2)}/${thr.toFixed(2)}` +
       ` (chặt nhất 3s: ${this.recentMin.toFixed(2)}) · với ${reach.toFixed(2)}` +
       (this.calibUntil ? ' · ĐANG TỰ CHỈNH…' : '') +
       ` · ${fistNow ? 'NẮM ĐẤM' : this.pinched ? 'CHỤM' : palm ? 'XOÈ' : '—'}` +
@@ -495,8 +525,10 @@ export class HandTracker {
     // về 0 ngay khi có MỘT frame như vậy, nên giữ mãi cũng không bao giờ đủ.
     const hold = Math.max(0.4, this.state.input.fistHold)
     if (fistNow) this.fistMiss = 0
-    else this.fistMiss++
-    const fistHeld = fistNow || (this.fistTime > 0 && this.fistMiss <= 6)
+    else this.fistMiss += dt
+    // Cho phép mất dấu nắm đấm tới 0.2 GIÂY mà không mất tiến độ (trước đây đếm
+    // 6 frame — ở camera 15fps thành 0.4s, ở 60fps chỉ 0.1s).
+    const fistHeld = fistNow || (this.fistTime > 0 && this.fistMiss <= 0.2)
 
     let label = this.pinched ? 'đang vẽ' : 'chụm ngón để vẽ'
     if (fistHeld && this.fistArmed) {

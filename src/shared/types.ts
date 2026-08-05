@@ -58,6 +58,9 @@ export interface Output {
   open: boolean
   display: number
   mode: 'windowed' | 'fullscreen'
+  /** Có đẩy bề mặt này ra Spout/NDI không. Mỗi bề mặt bật thêm là một lần render
+   *  offscreen nữa — tường 11.2 triệu pixel + sàn 8.3 triệu = 19.5 triệu mỗi frame. */
+  send: boolean
 }
 
 export interface AppState {
@@ -92,6 +95,13 @@ export interface AppState {
     pinchThreshold: number
     /** Cổng WebSocket cho Kinect bridge. */
     kinectPort: number
+  }
+
+  floor: {
+    /** Xoay nội dung sàn theo hướng máy chiếu: 0/90/180/270 độ. */
+    rotation: number
+    /** Độ sáng sàn (%) — sàn chói quá thì át cả tường. */
+    brightness: number
   }
 
   look: {
@@ -159,3 +169,4 @@ export type Action =
   | { type: 'setNdi'; patch: Partial<AppState['ndi']> }
   | { type: 'setInput'; patch: Partial<AppState['input']> }
   | { type: 'setLook'; patch: Partial<AppState['look']> }
+  | { type: 'setFloor'; patch: Partial<AppState['floor']> }

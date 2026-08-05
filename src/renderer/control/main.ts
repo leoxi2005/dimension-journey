@@ -103,6 +103,21 @@ function render(): void {
     b.classList.toggle('on', +b.dataset.scale! === state[t].scale)
   })
 
+  // ---- sàn ----
+  const floor = state.outputs.find((o) => o.key === 'floor')!
+  const fw = $('fResW') as HTMLInputElement
+  const fh = $('fResH') as HTMLInputElement
+  if (document.activeElement !== fw) fw.value = String(floor.resW)
+  if (document.activeElement !== fh) fh.value = String(floor.resH)
+  document.querySelectorAll<HTMLButtonElement>('#fRotSeg button').forEach((b) => {
+    b.classList.toggle('on', +b.dataset.rot! === state.floor.rotation)
+  })
+  setRange('fBright', state.floor.brightness, `${state.floor.brightness}%`)
+  setToggle($('btnFOpen'), floor.open, 'đóng cửa sổ', 'mở cửa sổ')
+  setToggle($('btnFFs'), floor.mode === 'fullscreen', 'toàn màn hình: bật', 'toàn màn hình')
+  setToggle($('btnFSend'), floor.send, 'sàn: ĐANG GỬI', 'gửi sàn ra Spout/NDI')
+  $('fSendWarn').style.display = floor.send ? 'block' : 'none'
+
   setToggle($('btnHud'), state.look.hud, 'chữ HUD: hiện', 'chữ HUD: ẩn')
   setToggle($('btnBloom'), state.look.bloom, 'bloom: bật', 'bloom: tắt')
 }
@@ -240,6 +255,35 @@ function wire(): void {
       else window.dj.send({ type: 'setNdi', patch: { scale } })
     }
   })
+
+  // ---- sàn ----
+  const commitFRes = (): void => {
+    window.dj.send({
+      type: 'setOutput', key: 'floor',
+      patch: { resW: +($('fResW') as HTMLInputElement).value, resH: +($('fResH') as HTMLInputElement).value }
+    })
+  }
+  $('fResW').onchange = commitFRes
+  $('fResH').onchange = commitFRes
+  document.querySelectorAll<HTMLButtonElement>('#fRotSeg button').forEach((b) => {
+    b.onclick = (): void => window.dj.send({ type: 'setFloor', patch: { rotation: +b.dataset.rot! } })
+  })
+  range('fBright', (v) => window.dj.send({ type: 'setFloor', patch: { brightness: v } }))
+  $('btnFOpen').onclick = (): void => {
+    const f = state.outputs.find((o) => o.key === 'floor')!
+    window.dj.send({ type: 'setOutput', key: 'floor', patch: { open: !f.open } })
+  }
+  $('btnFFs').onclick = (): void => {
+    const f = state.outputs.find((o) => o.key === 'floor')!
+    window.dj.send({
+      type: 'setOutput', key: 'floor',
+      patch: { mode: f.mode === 'fullscreen' ? 'windowed' : 'fullscreen', open: true }
+    })
+  }
+  $('btnFSend').onclick = (): void => {
+    const f = state.outputs.find((o) => o.key === 'floor')!
+    window.dj.send({ type: 'setOutput', key: 'floor', patch: { send: !f.send } })
+  }
 
   $('btnHud').onclick = (): void => window.dj.send({ type: 'setLook', patch: { hud: !state.look.hud } })
   $('btnBloom').onclick = (): void => window.dj.send({ type: 'setLook', patch: { bloom: !state.look.bloom } })

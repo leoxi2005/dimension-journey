@@ -14,10 +14,9 @@ const isDev = !!process.env['ELECTRON_RENDERER_URL']
 export const PRELOAD_PATH = join(__dirname, '../preload/index.js')
 
 function rendererFor(role: Role): { url?: string; file?: string } {
-  // Wall và Floor dùng CHUNG một renderer; vai trò truyền qua additionalArguments.
-  const page = role === 'control' ? 'control' : 'wall'
-  if (isDev) return { url: `${process.env['ELECTRON_RENDERER_URL']}/${page}/index.html` }
-  return { file: join(__dirname, `../renderer/${page}/index.html`) }
+  // Mỗi vai một trang riêng: sàn có scene khác hẳn tường, không dùng chung.
+  if (isDev) return { url: `${process.env['ELECTRON_RENDERER_URL']}/${role}/index.html` }
+  return { file: join(__dirname, `../renderer/${role}/index.html`) }
 }
 
 function load(win: BrowserWindow, role: Role): void {

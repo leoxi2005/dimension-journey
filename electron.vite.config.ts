@@ -20,7 +20,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           control: resolve(__dirname, 'src/renderer/control/index.html'),
-          wall: resolve(__dirname, 'src/renderer/wall/index.html')
+          wall: resolve(__dirname, 'src/renderer/wall/index.html'),
+          floor: resolve(__dirname, 'src/renderer/floor/index.html')
         }
       }
     }
