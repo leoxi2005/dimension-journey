@@ -87,9 +87,13 @@ jobs:
             if (!(Test-Path "$out/$f")) { throw "THIEU $out/$f — bridge Kinect build khong ra" }
           }
           New-Item -ItemType Directory -Force dist | Out-Null
-          $items = Get-ChildItem "$out" -Include *.exe,*.dll,*.config -File
+          # LƯU Ý: Get-ChildItem -Include KHÔNG trả gì nếu đường dẫn không kết
+          # thúc bằng /* — bẫy kinh điển của PowerShell, đã dính một lần.
+          $items = Get-ChildItem "$out/*" -Include *.exe,*.dll,*.config -File
+          if (-not $items) { throw "Khong gom duoc file nao tu $out" }
           Compress-Archive -Path $items -DestinationPath dist/KinectBridge.zip -Force
-          echo "KINECT_BRIDGE=OK"
+          $n = (Get-Item dist/KinectBridge.zip).Length
+          echo "KINECT_BRIDGE=OK ($($items.Count) file, zip $n bytes)"
 
       - name: Upload .exe (artifact)
         uses: actions/upload-artifact@v4
