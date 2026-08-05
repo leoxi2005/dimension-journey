@@ -1,0 +1,33 @@
+{
+  "name": "dimension-journey",
+  "version": "1.0.0",
+  "description": "DIMENSION JOURNEY 0D-5D — interactive projection app (Wall 10350x1080) with Spout/NDI out for Resolume Arena",
+  "main": "./out/main/index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "dist:win": "electron-vite build && electron-builder --win --x64 --publish never",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "@stagetimerio/grandiose": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/three": "^0.170.0",
+    "@types/ws": "^8.5.13",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.11"
+  }
+}

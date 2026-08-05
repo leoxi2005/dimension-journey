@@ -1,0 +1,268 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>DIMENSION JOURNEY · Operator</title>
+    <style>
+      :root {
+        --bg: #07060c; --panel: #0d0a18; --line: rgba(167,139,250,0.22);
+        --violet: #a78bfa; --ink: #e8e4f5; --mute: #8b7fb8; --dim: #6f649a;
+        --ok: #5ee6a8; --warn: #f5c044; --bad: #f4587a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--ink);
+        font-family: 'Space Grotesk', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+        font-size: 13px; user-select: none;
+      }
+      .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace; }
+      #app { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px; height: 100vh; }
+      .col { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+      .card {
+        background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+      }
+      .card > h2 {
+        margin: 0 0 12px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+        color: var(--mute); font-weight: 700;
+        font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+      }
+      .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .row + .row { margin-top: 10px; }
+      label.lbl { color: var(--dim); font-size: 11px; letter-spacing: 0.06em; min-width: 92px; }
+      button {
+        font: inherit; color: var(--mute); background: rgba(167,139,250,0.07);
+        border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer;
+        transition: all 0.18s ease;
+      }
+      button:hover { background: rgba(167,139,250,0.16); color: var(--ink); }
+      button.on { background: var(--violet); color: #0d0a18; border-color: var(--violet); font-weight: 700; }
+      button:disabled { opacity: 0.35; cursor: not-allowed; }
+      button.wide { flex: 1; }
+      .dims { display: flex; gap: 8px; }
+      .dims button {
+        flex: 1; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+        font-weight: 700; font-size: 15px; padding: 12px 0; border-radius: 10px;
+      }
+      input[type="number"], input[type="text"], select {
+        font: inherit; color: var(--ink); background: rgba(0,0,0,0.35);
+        border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; min-width: 0;
+      }
+      input[type="number"] { width: 86px; }
+      select { flex: 1; }
+      input[type="range"] { flex: 1; accent-color: var(--violet); }
+      .val { color: var(--violet); min-width: 52px; text-align: right; font-size: 11px; }
+      /* Giới hạn bề ngang: ô 4:3 kéo hết cột sẽ cao ~700px và đẩy toàn bộ slider
+         chỉnh tay xuống dưới mép màn hình. */
+      #camWrap {
+        position: relative; width: 100%; max-width: 320px; aspect-ratio: 4/3;
+        border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #000;
+      }
+      #cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.6; }
+      #skel { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #gesture {
+        position: absolute; left: 0; right: 0; bottom: 6px; text-align: center;
+        font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 11px;
+        color: #c4b5fd; text-shadow: 0 1px 6px #000; letter-spacing: 0.06em;
+      }
+      .status { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--mute); }
+      .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 8px currentColor; }
+      .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+      .note { font-size: 11px; color: var(--dim); line-height: 1.6; }
+      .note.bad { color: var(--bad); }
+      .note.warn { color: var(--warn); }
+      pre#logbox {
+        margin: 8px 0 0; max-height: 130px; overflow: auto; font-size: 10px; line-height: 1.5;
+        color: var(--dim); background: rgba(0,0,0,0.35); border-radius: 8px; padding: 8px;
+        white-space: pre-wrap; word-break: break-all;
+      }
+      .hdr { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+      .hdr .t { font-size: 17px; font-weight: 600; letter-spacing: 0.02em; }
+      .hdr .s { font-size: 11px; color: var(--dim); letter-spacing: 0.1em; }
+      .seg { display: flex; gap: 6px; }
+      .seg button { flex: 1; padding: 6px 0; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <!-- ------------------------------------------------ cột trái: điều khiển -->
+      <div class="col">
+        <div class="card">
+          <div class="hdr">
+            <div class="t">DIMENSION JOURNEY</div>
+            <div class="s mono">0D → 5D</div>
+          </div>
+          <div class="note">Tường <span id="wallLabel" class="mono">10350×1080</span> · Spout → Resolume Arena</div>
+          <div class="row" style="margin-top:12px">
+            <div class="dims" id="dims" style="flex:1"></div>
+          </div>
+          <div class="row">
+            <button id="btnPrev">← lùi</button>
+            <button id="btnNext">tiến →</button>
+            <button id="btnClear" class="wide">xoá nét (C)</button>
+            <button id="btnSound">tiếng</button>
+          </div>
+          <div class="note" id="stageNote" style="margin-top:10px"></div>
+        </div>
+
+        <div class="card">
+          <h2>Nguồn tương tác</h2>
+          <div class="seg" id="srcSeg">
+            <button data-src="camera">Camera + MediaPipe</button>
+            <button data-src="kinect">Kinect v2 (IR)</button>
+            <button data-src="mouse">Chuột</button>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <label class="lbl">Thiết bị</label>
+            <select id="camSel"></select>
+            <button id="btnRecam">nạp lại</button>
+          </div>
+          <div id="camWrap" style="margin-top:12px">
+            <video id="cam"></video>
+            <canvas id="skel" width="480" height="360"></canvas>
+            <div id="gesture" class="mono">chưa có tay</div>
+          </div>
+          <div class="status" style="margin-top:10px">
+            <div class="dot warn" id="trackDot"></div>
+            <div id="trackText">đang khởi động…</div>
+          </div>
+          <div class="row">
+            <label class="lbl">Tầm với</label>
+            <input type="range" id="reach" min="40" max="100" step="1" />
+            <div class="val mono" id="reachVal"></div>
+          </div>
+          <div class="note">100% = quét tay đi hết chiều dài tường. Hạ xuống nếu thấy nét giật ở hai đầu.</div>
+          <div class="row">
+            <label class="lbl">Mượt</label>
+            <input type="range" id="smooth" min="0" max="0.9" step="0.05" />
+            <div class="val mono" id="smoothVal"></div>
+          </div>
+          <div class="row">
+            <label class="lbl">Ngưỡng chụm</label>
+            <input type="range" id="pinch" min="0.2" max="0.6" step="0.01" />
+            <div class="val mono" id="pinchVal"></div>
+          </div>
+          <div class="note">Chụm khó ăn → tăng. Tự động vẽ khi chưa chụm → giảm.</div>
+          <div id="kinectBox" style="display:none">
+            <div class="row">
+              <label class="lbl">Cổng bridge</label>
+              <input type="number" id="kinectPort" min="1024" max="65535" />
+              <div class="status"><div class="dot warn" id="kinectDot"></div><div id="kinectText">—</div></div>
+            </div>
+            <div class="note">Chạy <span class="mono">KinectBridge.exe</span> trên máy Windows (xem kinect-bridge/README).</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------ cột phải: đầu ra -->
+      <div class="col">
+        <div class="card">
+          <h2>Tường — cửa sổ chiếu</h2>
+          <div class="row">
+            <label class="lbl">Độ phân giải</label>
+            <input type="number" id="resW" /> ×
+            <input type="number" id="resH" />
+            <button id="btnResNative">gốc</button>
+          </div>
+          <div class="row">
+            <label class="lbl">Màn hình</label>
+            <select id="displaySel"></select>
+          </div>
+          <div class="row">
+            <button id="btnOpen" class="wide">mở cửa sổ</button>
+            <button id="btnFs">toàn màn hình</button>
+          </div>
+          <div class="note warn" id="dupWarn" style="display:none">
+            Cửa sổ chiếu đang mở ⇒ scene render 2 lần (1 cho màn hình + 1 cho Spout). Lúc chạy show
+            nên ĐÓNG cửa sổ này, Resolume vẫn nhận Spout bình thường.
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Spout — đường ra chính</h2>
+          <div class="row">
+            <button id="btnSpout" class="wide">bật Spout</button>
+            <div class="seg" style="flex:1">
+              <button class="fps" data-fps="30" data-t="spout">30</button>
+              <button class="fps" data-fps="60" data-t="spout">60</button>
+            </div>
+          </div>
+          <div class="row">
+            <label class="lbl">Res gửi</label>
+            <div class="seg" style="flex:1">
+              <button class="scale" data-scale="100" data-t="spout">100%</button>
+              <button class="scale" data-scale="75" data-t="spout">75%</button>
+              <button class="scale" data-scale="50" data-t="spout">50%</button>
+            </div>
+          </div>
+          <div class="status" style="margin-top:10px">
+            <div class="dot warn" id="spoutDot"></div>
+            <div id="spoutText" class="mono">—</div>
+          </div>
+          <div class="note bad" id="spoutReason"></div>
+          <div class="row"><button id="btnLog">mở file log</button></div>
+          <pre id="logbox" class="mono"></pre>
+        </div>
+
+        <div class="card">
+          <h2>NDI — chỉ khi Resolume ở máy khác</h2>
+          <div class="row">
+            <button id="btnNdi" class="wide">bật NDI</button>
+            <div class="seg" style="flex:1">
+              <button class="fps" data-fps="30" data-t="ndi">30</button>
+              <button class="fps" data-fps="60" data-t="ndi">60</button>
+            </div>
+          </div>
+          <div class="row">
+            <label class="lbl">Res gửi</label>
+            <div class="seg" style="flex:1">
+              <button class="scale" data-scale="100" data-t="ndi">100%</button>
+              <button class="scale" data-scale="75" data-t="ndi">75%</button>
+              <button class="scale" data-scale="50" data-t="ndi">50%</button>
+            </div>
+          </div>
+          <div class="status" style="margin-top:10px">
+            <div class="dot warn" id="ndiDot"></div>
+            <div id="ndiText" class="mono">—</div>
+          </div>
+          <div class="note">
+            Đo thật trên máy dev: 10350×1080 @30fps giữ đủ 30fps, copy 5–6 ms/frame — dùng được.
+            Xin 60fps vẫn chỉ ra ~30fps. Cùng máy với Resolume thì cứ Spout: nhanh hơn và
+            bật cả hai là scene phải render thêm một lần nữa.
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Khung hình &amp; hiển thị</h2>
+          <div class="row">
+            <label class="lbl">Góc nhìn ngang</label>
+            <input type="range" id="hfov" min="60" max="150" step="1" />
+            <div class="val mono" id="hfovVal"></div>
+          </div>
+          <div class="note">Càng lớn thì trường càng rộng và rìa tường càng méo. 100° là mức cân bằng.</div>
+          <div class="row">
+            <label class="lbl">Dày nét</label>
+            <input type="range" id="strokeScale" min="0.5" max="4" step="0.1" />
+            <div class="val mono" id="strokeScaleVal"></div>
+          </div>
+          <div class="note">Nét mảnh trên tường 10m thì gần như mất; 1.8–2.5× là mức đọc được từ xa.</div>
+          <div class="row">
+            <label class="lbl">Mật độ sao</label>
+            <input type="range" id="stars" min="50" max="200" step="5" />
+            <div class="val mono" id="starsVal"></div>
+          </div>
+          <div class="row">
+            <button id="btnHud">chữ HUD</button>
+            <input type="range" id="hudScale" min="1" max="4" step="0.1" style="flex:1" />
+            <div class="val mono" id="hudScaleVal"></div>
+          </div>
+          <div class="row">
+            <button id="btnBloom">bloom</button>
+            <input type="range" id="bloomS" min="0" max="2" step="0.05" style="flex:1" />
+            <div class="val mono" id="bloomSVal"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

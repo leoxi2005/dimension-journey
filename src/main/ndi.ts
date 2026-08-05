@@ -1,0 +1,209 @@
+// ============================================================================
+// NdiService — đường ra DỰ PHÒNG (khi Resolume nằm ở máy khác).
+//
+// NDI đi đường CPU: mỗi frame 10350×1080 = 44.7MB copy về RAM rồi nén SpeedHQ.
+//
+// SỐ ĐO THẬT của app này (M4 Max, Electron 33, MỘT bề mặt tường):
+//   100% res, 30fps  → giữ đủ 30fps, copy 5-6ms/frame
+//    50% res, 30fps  → giữ đủ 30fps, copy 1-2ms/frame
+//   xin 60fps         → vẫn chỉ ra ~30fps (OSR trên macOS raster bằng CPU)
+// Nhẹ hơn nhiều so với con số 33-52ms ở project DAY3 trước, vì ở đó có tới HAI
+// bề mặt (tường + sàn) cùng copy trên một main thread.
+//
+// Dù vậy vẫn mặc định TẮT: cùng máy với Resolume thì Spout (GPU, zero-copy)
+// nhanh hơn hẳn, và bật cả hai nghĩa là render scene thêm một lần nữa.
+// ============================================================================
+import { BrowserWindow, screen } from 'electron'
+import { Output, OutputKey, NdiStatus } from '../shared/types'
+import { PRELOAD_PATH, loadOutputRenderer } from './windows'
+import { log } from './log'
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+let ndi: any = null
+let loadReason = ''
+try {
+  // optionalDependency — thiếu thì app vẫn chạy, chỉ mất đường NDI.
+  ndi = require('@stagetimerio/grandiose')
+} catch (e) {
+  loadReason = `@stagetimerio/grandiose không nạp được: ${(e as Error).message}`
+}
+
+const FOURCC_BGRA = 0x41524742 // 'BGRA' — NDIlib_FourCC_type_BGRA
+const FORMAT_PROGRESSIVE = 1 // NDIlib_frame_format_type_progressive
+
+interface Stream {
+  win: BrowserWindow
+  sender: any
+  name: string
+  resW: number
+  resH: number
+  reqFps: number
+  sent: number
+  fps: number
+  fpsMark: number
+  fpsCount: number
+  copyMs: number
+  inflight: boolean // KHÔNG BAO GIỜ cho >1 frame inflight: NDI SDK không thread-safe
+  note: string
+  starting: boolean
+}
+
+export class NdiService {
+  private streams: Partial<Record<OutputKey, Stream>> = {}
+  private lastError = ''
+
+  available(): boolean {
+    return !!(ndi && ndi.send)
+  }
+
+  status(): NdiStatus {
+    const streams = (Object.entries(this.streams) as Array<[string, Stream]>).map(([role, s]) => ({
+      role, name: s.name, w: s.resW, h: s.resH, fps: s.fps, sent: s.sent, copyMs: s.copyMs
+    }))
+    return {
+      available: this.available(),
+      reason: this.available() ? this.lastError : loadReason || 'chưa cài @stagetimerio/grandiose',
+      streams
+    }
+  }
+
+  broadcastWindows(): BrowserWindow[] {
+    return Object.values(this.streams)
+      .filter((s): s is Stream => !!s)
+      .map((s) => s.win)
+      .filter((w) => !w.isDestroyed())
+  }
+
+  private scaled(v: number, scale: number): number {
+    const s = Math.min(100, Math.max(25, scale || 100))
+    return Math.max(2, Math.round((v * s) / 100 / 2) * 2)
+  }
+
+  sync(running: boolean, fps: number, scale: number, outputs: Output[]): void {
+    if (!this.available()) return
+    for (const o of outputs) {
+      const role = o.key
+      const cur = this.streams[role]
+      const w = this.scaled(o.resW, scale)
+      const h = this.scaled(o.resH, scale)
+      if (running && !cur) this.start(role, o.stream, fps, w, h)
+      else if (!running && cur) this.stop(role)
+      else if (running && cur) {
+        if (cur.resW !== w || cur.resH !== h) {
+          this.stop(role)
+          this.start(role, o.stream, fps, w, h)
+        } else if (cur.reqFps !== fps) {
+          cur.reqFps = fps
+          cur.win.webContents.setFrameRate(fps)
+        }
+      }
+    }
+  }
+
+  private async start(role: OutputKey, name: string, fps: number, resW: number, resH: number): Promise<void> {
+    // dpr: cửa sổ offscreen phải có device-pixel = đúng resW, nếu không trên màn
+    // Retina (dpr 2) khung sẽ nhân đôi và vượt giới hạn texture 16384.
+    const dpr = Math.min(3, Math.max(1, screen.getPrimaryDisplay().scaleFactor || 1))
+    const win = new BrowserWindow({
+      width: Math.round(resW / dpr),
+      height: Math.round(resH / dpr),
+      show: false,
+      webPreferences: {
+        preload: PRELOAD_PATH,
+        sandbox: false,
+        offscreen: true, // CPU bitmap — NDI cần pixel, không dùng shared texture được
+        backgroundThrottling: false,
+        additionalArguments: [`--dj-role=${role}`]
+      }
+    })
+    const st: Stream = {
+      win, sender: null, name, resW, resH, reqFps: fps, sent: 0, fps: 0,
+      fpsMark: Date.now(), fpsCount: 0, copyMs: 0, inflight: false, note: '', starting: true
+    }
+    this.streams[role] = st
+
+    try {
+      st.sender = await ndi.send({ name, clockVideo: false, clockAudio: false })
+    } catch (e) {
+      this.lastError = `tạo sender NDI thất bại: ${(e as Error).message}`
+      log('ndi', this.lastError)
+      this.stop(role)
+      return
+    }
+    if (this.streams[role] !== st || win.isDestroyed()) return
+    st.starting = false
+
+    win.webContents.setFrameRate(fps)
+    win.webContents.on('paint', (_e: any, _dirty: any, image: any) => {
+      if (this.streams[role] !== st || st.starting || !st.sender) return
+      // Bỏ frame khi frame trước chưa gửi xong. Hai lời gọi send song song trên
+      // cùng một sender = crash (NDI SDK không có mutex ở tầng này).
+      if (st.inflight) return
+      if (!image || !image.getSize) return
+      const sz = image.getSize()
+      if (!sz.width || !sz.height) return
+
+      const t0 = Date.now()
+      // Phải copy: grandiose đọc buffer trên libuv thread sau khi callback đã
+      // trả về, còn bitmap của Electron chỉ sống trong lời gọi này.
+      const data = Buffer.from(image.getBitmap())
+      st.copyMs = Date.now() - t0
+      st.inflight = true
+      Promise.resolve(
+        // Bỏ hẳn timecode: để NDI tự sinh. Đưa số cố định vào là mọi frame trùng
+        // dấu thời gian, phía nhận sẽ coi là frame lặp.
+        st.sender.video({
+          xres: sz.width,
+          yres: sz.height,
+          frameRateN: Math.round(st.reqFps * 1000),
+          frameRateD: 1000,
+          pictureAspectRatio: sz.width / sz.height,
+          frameFormatType: FORMAT_PROGRESSIVE,
+          lineStrideBytes: sz.width * 4,
+          fourCC: FOURCC_BGRA,
+          data
+        })
+      )
+        .then(() => {
+          if (st.sent === 0) {
+            log('ndi', `${role}: ĐANG PHÁT "${name}" ${sz.width}x${sz.height} @${st.reqFps}fps`)
+            this.lastError = ''
+          }
+          st.sent++
+          st.fpsCount++
+          const now = Date.now()
+          if (now - st.fpsMark >= 1000) {
+            st.fps = Math.round((st.fpsCount * 1000) / (now - st.fpsMark))
+            st.fpsMark = now
+            st.fpsCount = 0
+          }
+        })
+        .catch((err: Error) => {
+          if (st.note !== err.message) {
+            st.note = err.message
+            this.lastError = err.message
+            log('ndi', `${role}: gửi frame lỗi — ${err.message}`)
+          }
+        })
+        .finally(() => {
+          st.inflight = false
+        })
+    })
+
+    loadOutputRenderer(win, role)
+    log('ndi', `start "${name}" (${role}) @ ${resW}x${resH}, dpr=${dpr}`)
+  }
+
+  private stop(role: OutputKey): void {
+    const st = this.streams[role]
+    if (!st) return
+    delete this.streams[role]
+    try { if (st.sender && st.sender.destroy) st.sender.destroy() } catch { /* đã đóng */ }
+    try { if (!st.win.isDestroyed()) st.win.destroy() } catch { /* đã chết */ }
+    log('ndi', `stop "${st.name}" (${role}) — đã gửi ${st.sent} frame`)
+  }
+
+  stopAll(): void {
+    for (const role of Object.keys(this.streams) as OutputKey[]) this.stop(role)
+  }
+}

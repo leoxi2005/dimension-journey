@@ -1,0 +1,10 @@
+{
+  "name": "dj-spout",
+  "version": "0.1.0",
+  "description": "Spout sender addon (Windows) — publish Electron OSR shared texture via SpoutDX",
+  "main": "index.js",
+  "gypfile": true,
+  "dependencies": {
+    "node-addon-api": "^8.2.0"
+  }
+}

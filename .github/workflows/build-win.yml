@@ -1,0 +1,89 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-win:
+    # windows-2022 có Visual Studio 2022. KHÔNG dùng windows-latest: đã lên VS mới
+    # hơn mức node-gyp nhận ra và build addon sẽ chết.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # node-gyp cần Python; ghim 3.11 (3.12 hỏng với gyp cũ).
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: npm install
+        env:
+          npm_config_python: ${{ steps.py.outputs.python-path }}
+
+      # Build addon Spout NGAY TRÊN WINDOWS. Xoá build/ trước để không bao giờ
+      # nhận nhầm binary macOS lỡ lọt vào repo (đã dính một lần ở project trước).
+      - name: Build Spout addon (Windows)
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force native/spout/build -ErrorAction SilentlyContinue
+          Push-Location native/spout
+          npm install --no-audit --no-fund
+          npx --yes node-gyp rebuild
+          Pop-Location
+        env:
+          npm_config_python: ${{ steps.py.outputs.python-path }}
+
+      - name: Verify Spout addon is a Windows binary
+        shell: pwsh
+        run: |
+          $p = "native/spout/build/Release/djspout.node"
+          if (!(Test-Path $p)) { throw "THIEU $p — addon Spout không build được" }
+          $b = [System.IO.File]::ReadAllBytes($p)
+          if ($b.Length -lt 2 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw "$p KHONG phai binary Windows (thiếu magic MZ)" }
+          echo "SPOUT_ADDON=OK ($($b.Length) bytes, PE/MZ)"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build + package Windows .exe
+        run: npm run dist:win
+
+      - name: Verify Spout addon + MediaPipe shipped in package
+        shell: pwsh
+        run: |
+          $p = "dist/win-unpacked/resources/djspout.node"
+          if (!(Test-Path $p)) { throw "THIEU $p — .exe đóng gói KHÔNG có addon Spout" }
+          $b = [System.IO.File]::ReadAllBytes($p)
+          if ($b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw "$p không phải binary Windows" }
+          foreach ($f in @("hand_landmarker.task","vision_bundle.mjs","vision_wasm_internal.js","vision_wasm_internal.wasm")) {
+            $q = "dist/win-unpacked/resources/mediapipe/$f"
+            if (!(Test-Path $q)) { throw "THIEU $q — tracking sẽ không chạy trên máy venue" }
+          }
+          echo "PACKAGE=OK"
+
+      - name: Upload .exe (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DIMENSION-JOURNEY-windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+      - name: Publish Release (link tải công khai)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: win-latest
+          name: DIMENSION JOURNEY — Windows build
+          body: "Tải file portable .exe bên dưới, chạy thẳng trên Windows (không cần cài Node)."
+          files: dist/*.exe
+          fail_on_unmatched_files: true

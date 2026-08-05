@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>DIMENSION · WALL</title>
+    <style>
+      /* Font hệ thống: venue không có mạng, nhúng webfont chỉ tổ rủi ro.
+         Ưu tiên font hình học sẵn có trên Windows/macOS. */
+      :root {
+        --violet: #a78bfa;
+        --ink: #e8e4f5;
+        --mute: #b3a8d4;
+      }
+      html, body {
+        margin: 0; padding: 0; background: #07060c; overflow: hidden;
+        width: 100%; height: 100%;
+        font-family: 'Space Grotesk', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+        color: var(--ink); user-select: none; cursor: crosshair;
+      }
+      #stage { position: fixed; inset: 0; }
+      canvas#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      /* Vệt tối hai đầu tường — giấu chỗ ánh sáng máy chiếu yếu đi ở rìa. */
+      #vignette {
+        position: absolute; inset: 0; pointer-events: none;
+        background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(5,3,12,0.55) 100%);
+      }
+      #hud {
+        position: absolute; top: 0; left: 0;
+        transform-origin: top left;
+        pointer-events: none;
+        display: flex; flex-direction: column; gap: 12px;
+        padding: 44px 0 0 56px;
+        max-width: 620px;
+      }
+      #hud.off { display: none; }
+      #hudTop { display: flex; align-items: baseline; gap: 18px; }
+      #stageKey {
+        font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+        font-size: 72px; font-weight: 700; color: var(--violet);
+        text-shadow: 0 0 36px rgba(139,92,246,0.65); letter-spacing: 0.04em; line-height: 1;
+      }
+      #stageTitle { font-size: 30px; font-weight: 600; color: #f3effd; }
+      #stageCaption { font-size: 17px; font-weight: 300; color: var(--mute); line-height: 1.55; }
+      #stageHint {
+        font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+        font-size: 13px; color: #8b5cf6; letter-spacing: 0.06em; margin-top: 4px;
+      }
+      /* Đếm layer 5D: neo bên PHẢI, scale ngược lại từ góc phải. */
+      #layers {
+        position: absolute; top: 0; right: 0; transform-origin: top right;
+        margin: 52px 56px 0 0;
+        font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+        font-size: 14px; color: #c4b5fd; background: rgba(139,92,246,0.08);
+        border: 1px solid rgba(167,139,250,0.3); border-radius: 999px;
+        padding: 8px 18px; letter-spacing: 0.08em; display: none;
+      }
+      #ring {
+        position: absolute; inset: 0; display: none;
+        align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+        pointer-events: none;
+      }
+      #ring .cap {
+        font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+        font-size: 14px; color: #c4b5fd; letter-spacing: 0.14em; text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="gl"></canvas>
+      <div id="vignette"></div>
+      <div id="hud">
+        <div id="hudTop">
+          <div id="stageKey">0D</div>
+          <div id="stageTitle">the point</div>
+        </div>
+        <div id="stageCaption"></div>
+        <div id="stageHint"></div>
+      </div>
+      <div id="layers">layers stacked: 0</div>
+      <div id="ring">
+        <svg width="130" height="130" viewBox="0 0 130 130">
+          <circle cx="65" cy="65" r="56" fill="none" stroke="rgba(167,139,250,0.15)" stroke-width="6"></circle>
+          <circle id="ringArc" cx="65" cy="65" r="56" fill="none" stroke="#a78bfa" stroke-width="6"
+                  stroke-linecap="round" stroke-dasharray="351.86" stroke-dashoffset="351.86"
+                  transform="rotate(-90 65 65)" style="filter: drop-shadow(0 0 8px rgba(167,139,250,0.8));"></circle>
+        </svg>
+        <div class="cap">shifting dimension</div>
+      </div>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

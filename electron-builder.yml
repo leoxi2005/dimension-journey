@@ -1,0 +1,37 @@
+appId: com.leoxi.dimensionjourney
+productName: DIMENSION JOURNEY
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  # Addon Spout: chỉ lấy ĐÚNG file .node + loader. Không kéo theo spoutsdk/ và rác
+  # node-gyp/MSVC. Vì thế dj-spout KHÔNG được là dependency trong package.json —
+  # electron-builder copy dependency bằng cơ chế riêng, không qua bộ lọc này.
+  - native/spout/index.js
+  - native/spout/package.json
+  - native/spout/build/Release/*.node
+asarUnpack:
+  - '**/native/spout/**'
+extraResources:
+  # Nguồn nạp chính của addon Spout — đường dẫn cố định, ngoài asar.
+  # Thiếu file này thì build FAIL ngay thay vì ra .exe im lặng không có Spout.
+  - from: native/spout/build/Release/djspout.node
+    to: djspout.node
+  # Model + wasm MediaPipe: app phải chạy được ở venue không có mạng.
+  - from: resources/mediapipe
+    to: mediapipe
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
