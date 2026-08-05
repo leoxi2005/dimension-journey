@@ -28,7 +28,7 @@ export function initialState(): AppState {
     ndi: { running: false, fps: 30, scale: 100 },
     input: {
       source: 'camera', deviceId: '', reach: 100, smooth: 0.3,
-      mirror: true, fistHold: 4, pinchThreshold: 0.36, kinectPort: 9010
+      mirror: true, fistHold: 1, pinchThreshold: 0.36, kinectPort: 9010
     },
     look: {
       hFov: 100, hud: true, hudScale: 1.8, bloom: true, bloomStrength: 0.85,

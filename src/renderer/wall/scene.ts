@@ -75,9 +75,6 @@ export class WallScene {
 
   private glowTex!: THREE.Texture
   private bgGroup = new THREE.Group()
-  private starMats: THREE.PointsMaterial[] = []
-  private nebulae: { mat: THREE.SpriteMaterial; base: number }[] = []
-  private bgFade = 1
   private strokeGroup = new THREE.Group()
   private stackGroup = new THREE.Group()
   private grid!: THREE.GridHelper
@@ -234,7 +231,6 @@ export class WallScene {
       anyC.geometry?.dispose()
       anyC.material?.dispose()
     }
-    this.nebulae = []
 
     const { dist, halfW } = this.f
     const tanH = halfW / dist
@@ -252,13 +248,12 @@ export class WallScene {
     const LAYERS = [
       // dim chọn sao cho độ sáng mỗi sao rơi đúng dải 0.25–0.75 của bản gốc,
       // không phải áng chừng bằng mắt trên ảnh đã thu nhỏ.
-      { frac: 0.62, size: 1.8, dim: 0.85 },
-      { frac: 0.29, size: 2.8, dim: 0.95 },
-      { frac: 0.09, size: 4.0, dim: 1.0 }
+      { frac: 0.62, size: 1.3, dim: 0.85 },
+      { frac: 0.29, size: 2.0, dim: 0.95 },
+      { frac: 0.09, size: 2.9, dim: 1.0 }
     ]
     const palette = [new THREE.Color(0x8b5cf6), new THREE.Color(0xc4b5fd), new THREE.Color(0xffffff), new THREE.Color(0x6d8bfa)]
     const zSpan = dist * 0.25
-    this.starMats = []
     for (const L of LAYERS) {
       const n = Math.max(1, Math.round(N * L.frac))
       const pos = new Float32Array(n * 3)
@@ -290,7 +285,6 @@ export class WallScene {
       const pts = new THREE.Points(geo, mat)
       pts.frustumCulled = false
       this.bgGroup.add(pts)
-      this.starMats.push(mat)
     }
 
     // Quầng tinh vân. Cỡ phải tính theo PHẦN CHIỀU CAO MÀN HÌNH nó chiếm, chứ
@@ -302,15 +296,13 @@ export class WallScene {
       const z = -dist * (0.3 + Math.random() * 0.5)
       const d = dist - z
       const frac = 0.35 + Math.random() * 0.5 // phần chiều cao khung mà quầng chiếm
-      const base = 0.035 + Math.random() * 0.04
-      const neb = this.makeSprite(nebCols[i % nebCols.length], frac * 2 * d * tanV, base)
+      const neb = this.makeSprite(nebCols[i % nebCols.length], frac * 2 * d * tanV, 0.035 + Math.random() * 0.04)
       neb.position.set(
         (Math.random() * 2 - 1) * d * tanH * 0.92,
         (Math.random() * 2 - 1) * d * tanV * 0.55,
         z
       )
       this.bgGroup.add(neb)
-      this.nebulae.push({ mat: neb.material as THREE.SpriteMaterial, base })
     }
   }
 
@@ -777,13 +769,10 @@ export class WallScene {
     // phút hai đầu bị nâng quá nửa chiều cao khung (6.5) và trôi hẳn ra ngoài —
     // đó là lý do nền không phủ liền. Chuyển động đã có sẵn từ camera drift.
 
-    // 0D — "no size, no space": nền phải lùi hẳn để trên tường chỉ còn ĐÚNG MỘT
-    // CHẤM, đúng như concept. Từ 1D trở đi nền quay lại đầy đủ.
-    // 0 tuyệt đối, không phải "mờ đi": concept nói "no size, no space… before
-    // anything exists" — có sao là đã có không gian rồi. 1D mới mở ra trường sao.
-    this.bgFade += ((stage === 0 ? 0 : 1) - this.bgFade) * 0.05
-    for (const m of this.starMats) m.opacity = 0.9 * this.bgFade
-    for (const n of this.nebulae) n.mat.opacity = n.base * Math.max(0, (this.bgFade - 0.25) / 0.75)
+    // Trường sao hiện ở MỌI chiều, kể cả 0D — đúng như file gốc (bgGroup không
+    // bao giờ bị ẩn hay làm mờ theo stage). Lý do 0D từng trông như một dải ngân
+    // hà là bốn lỗi khác đã sửa: vignette, xoay nền, sizeAttenuation, và sprite
+    // tinh vân to gấp 4.3 lần khung — KHÔNG phải do có sao.
 
     const gridMat = this.grid.material as THREE.Material & { opacity: number }
     gridMat.opacity += ((stage === 2 ? 0.14 : 0) - gridMat.opacity) * 0.05
