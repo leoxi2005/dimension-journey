@@ -9,6 +9,7 @@ export interface DjApi {
   openLog(): Promise<void>
   send(a: Action): void
   sendHand(h: HandFrame): void
+  log(tag: string, msg: string): void
   onState(fn: (s: AppState) => void): void
   onHand(fn: (h: HandFrame) => void): void
   onStatus(fn: (s: unknown) => void): void

@@ -50,7 +50,13 @@ function render(): void {
   }
   Array.from(dims.children).forEach((b, i) => b.classList.toggle('on', i === state.stage))
 
-  setToggle($('btnSound'), state.sound, 'tiếng: bật', 'tiếng: tắt')
+  const sndEl = $('btnSound')
+  if (!audio.ready) {
+    sndEl.classList.remove('on')
+    sndEl.textContent = 'tiếng: chưa mở'
+  } else {
+    setToggle(sndEl, state.sound, 'tiếng: bật', 'tiếng: tắt')
+  }
 
   // nguồn tương tác
   document.querySelectorAll<HTMLButtonElement>('#srcSeg button').forEach((b) => {
@@ -67,6 +73,10 @@ function render(): void {
   setRange('reach', state.input.reach, `${state.input.reach}%`)
   setRange('smooth', state.input.smooth, state.input.smooth.toFixed(2))
   setRange('pinch', state.input.pinchThreshold, state.input.pinchThreshold.toFixed(2))
+  setRange('fistHold', state.input.fistHold, `${state.input.fistHold.toFixed(1)}s`)
+  setToggle($('btnMirror'), state.input.mirror, 'lật gương: BẬT', 'lật gương: tắt')
+  // Video xem trước phải lật cùng chiều với dữ liệu, không thì mắt và tay đá nhau.
+  ;($('cam') as HTMLVideoElement).style.transform = state.input.mirror ? 'scaleX(-1)' : 'none'
   setRange('hfov', state.look.hFov, `${state.look.hFov}°`)
   setRange('stars', state.look.starDensity, `${state.look.starDensity}%`)
   setRange('strokeScale', state.look.strokeScale, `${state.look.strokeScale.toFixed(1)}×`)
@@ -169,6 +179,9 @@ function wire(): void {
   range('reach', (v) => window.dj.send({ type: 'setInput', patch: { reach: v } }))
   range('smooth', (v) => window.dj.send({ type: 'setInput', patch: { smooth: v } }))
   range('pinch', (v) => window.dj.send({ type: 'setInput', patch: { pinchThreshold: v } }))
+  range('fistHold', (v) => window.dj.send({ type: 'setInput', patch: { fistHold: v } }))
+  $('btnMirror').onclick = (): void =>
+    window.dj.send({ type: 'setInput', patch: { mirror: !state.input.mirror } })
   range('hfov', (v) => window.dj.send({ type: 'setLook', patch: { hFov: v } }))
   range('stars', (v) => window.dj.send({ type: 'setLook', patch: { starDensity: v } }))
   range('strokeScale', (v) => window.dj.send({ type: 'setLook', patch: { strokeScale: v } }))
@@ -262,6 +275,13 @@ async function listCameras(): Promise<void> {
 // ---------------------------------------------------------------- vòng chạy
 function onHand(h: HandFrame): void {
   window.dj.sendHand(h)
+  // Lưới an toàn: nếu ctx vẫn bị treo (autoplay policy đổi, thiết bị ra âm thanh
+  // đổi giữa chừng), lần đầu thấy tay là mở lại.
+  if (h.present && !audio.ready) {
+    audio.ensure()
+    audio.setEnabled(state.sound)
+    render()
+  }
   $('gesture').textContent = h.label || (h.present ? '' : 'chưa có tay')
 
   // Âm thanh bám theo nét vẽ.
@@ -304,6 +324,18 @@ async function boot(): Promise<void> {
     window.dj.send({ type: 'setOutput', key: 'wall', patch: { display: displays[0].id } })
   }
 
+  // Mở AudioContext NGAY. Trước đây chỉ mở khi có người bấm chuột/gõ phím vào
+  // cửa sổ này — mà người tham gia điều khiển bằng tay, không ai bấm gì, nên cả
+  // nhạc nền lẫn hiệu ứng im suốt show. Main đã bật switch autoplay-policy nên
+  // Chromium không chặn nữa.
+  audio.ensure()
+  audio.setEnabled(state.sound)
+  // Móc chẩn đoán, giống __djScene bên cửa sổ tường.
+  ;(window as unknown as { __djAudio: AudioEngine }).__djAudio = audio
+  window.dj.log('audio', `AudioContext = ${audio.ctxState}, master gain = ${audio.masterGainValue}`)
+  // 'suspended' nghĩa là Chromium vẫn chặn — cả show sẽ im tiếng.
+  setTimeout(() => window.dj.log('audio', `sau 3s: ${audio.ctxState}`), 3000)
+
   tracker = new HandTracker(
     $('cam') as HTMLVideoElement,
     $('skel') as HTMLCanvasElement,
@@ -313,10 +345,13 @@ async function boot(): Promise<void> {
       onStatus: (text, tone) => {
         $('trackText').textContent = text
         setDot('trackDot', tone)
+        window.dj.log('tracking', text)
       },
       onStageAdvance: () => window.dj.send({ type: 'nextStage' })
     }
   )
+  // Móc chẩn đoán (giống __djScene) — soi trạng thái cử chỉ thật khi ở venue.
+  ;(window as unknown as { __djTracker: HandTracker }).__djTracker = tracker
   await tracker.init()
   if (state.input.source === 'camera') await tracker.openCamera(state.input.deviceId)
   await listCameras()

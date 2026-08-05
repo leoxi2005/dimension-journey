@@ -789,8 +789,11 @@ export class WallScene {
     }
 
     if (this.pointerTarget) {
-      const k = 1 - THREE.MathUtils.clamp(this.state.input.smooth, 0, 0.95)
-      this.pointer.lerp(this.pointerTarget, k)
+      // Làm mượt THẬT nằm ở bộ lọc One Euro trong tracker, nơi biết dấu thời gian
+      // của từng frame camera. Ở đây chỉ nội suy 30Hz (camera) lên 60Hz (màn hình)
+      // cho đỡ giật bậc thang — nên hệ số cố định và cao, không lấy theo slider
+      // "mượt" nữa (lerp chồng lên lọc chỉ tổ thêm trễ).
+      this.pointer.lerp(this.pointerTarget, 0.65)
       this.cursor.position.copy(this.pointer)
     }
     this.cursor.visible = this.cursorActive && !!this.pointerTarget

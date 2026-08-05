@@ -22,6 +22,16 @@ export class AudioEngine {
     return !!this.ctx
   }
 
+  /** Chẩn đoán: 'running' mới thật sự ra tiếng. 'suspended' = Chromium vẫn chặn. */
+  get ctxState(): string {
+    return this.ctx ? this.ctx.state : 'none'
+  }
+
+  /** Mức tín hiệu đang ra loa — dùng để kiểm chứng có tiếng thật, không phải đoán. */
+  get masterGainValue(): number {
+    return this.master ? this.master.gain.value : -1
+  }
+
   /** Phải gọi từ trong một cử chỉ người dùng (autoplay policy). */
   ensure(): void {
     if (this.ctx) {

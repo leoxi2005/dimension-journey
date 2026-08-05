@@ -29,6 +29,47 @@ const MIME: Record<string, string> = {
   model: 'application/octet-stream'
 }
 
+/** Bộ lọc One Euro — chuẩn cho dữ liệu tay. Lerp thô phải chọn một trong hai:
+ *  mượt nhưng trễ, hoặc nhạy nhưng rung. One Euro tự nới tần số cắt theo tốc độ:
+ *  tay đứng yên thì lọc mạnh (hết rung), tay quét nhanh thì gần như không lọc
+ *  (hết trễ). Đây là lý do nét vẽ trước đây "đi theo không kịp" khi xoay tay. */
+class OneEuro {
+  private xPrev: number | null = null
+  private dxPrev = 0
+  private tPrev = 0
+  constructor(private minCutoff = 2.3, private beta = 1.2, private dCutoff = 1.0) {}
+
+  setMinCutoff(v: number): void {
+    this.minCutoff = v
+  }
+
+  private alpha(cutoff: number, dt: number): number {
+    const tau = 1 / (2 * Math.PI * cutoff)
+    return 1 / (1 + tau / dt)
+  }
+
+  filter(x: number, t: number): number {
+    if (this.xPrev === null) {
+      this.xPrev = x
+      this.tPrev = t
+      return x
+    }
+    const dt = Math.min(0.2, Math.max(1 / 240, t - this.tPrev))
+    this.tPrev = t
+    const dx = (x - this.xPrev) / dt
+    const aD = this.alpha(this.dCutoff, dt)
+    this.dxPrev = aD * dx + (1 - aD) * this.dxPrev
+    const a = this.alpha(this.minCutoff + this.beta * Math.abs(this.dxPrev), dt)
+    this.xPrev = a * x + (1 - a) * this.xPrev
+    return this.xPrev
+  }
+
+  reset(): void {
+    this.xPrev = null
+    this.dxPrev = 0
+  }
+}
+
 export interface TrackerCallbacks {
   onHand: (h: HandFrame) => void
   onStatus: (text: string, tone: 'ok' | 'warn' | 'bad') => void
@@ -48,8 +89,12 @@ export class HandTracker {
   private handSeen = 0
   private fistTime = 0
   private fistArmed = true
+  private fistMiss = 0   // số frame liên tiếp KHÔNG thấy nắm đấm
+  private pinchMiss = 0  // số frame liên tiếp thấy nhả chụm
   private ring = 0
   private dead = false
+  private fx = new OneEuro()
+  private fy = new OneEuro()
 
   /** Ảnh IR mới nhất từ Kinect bridge, đã giải mã. */
   private kinectBitmap: ImageBitmap | null = null
@@ -116,9 +161,11 @@ export class HandTracker {
     this.closeCamera()
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
+        // Xin 60fps: mỗi frame camera thiếu là thêm ~33ms trễ mà không cách nào
+        // bù lại được ở phía sau. 'ideal' nên camera 30fps vẫn nhận bình thường.
         video: deviceId
-          ? { deviceId: { exact: deviceId }, width: 640, height: 480 }
-          : { width: 640, height: 480, facingMode: 'user' }
+          ? { deviceId: { exact: deviceId }, width: 640, height: 480, frameRate: { ideal: 60 } }
+          : { width: 640, height: 480, facingMode: 'user', frameRate: { ideal: 60 } }
       })
       this.video.muted = true
       this.video.playsInline = true
@@ -197,8 +244,13 @@ export class HandTracker {
       this.handSeen = Math.max(0, this.handSeen - 1)
       if (this.handSeen === 0) {
         this.pinched = false
+        this.pinchMiss = 0
         this.fistTime = 0
+        this.fistMiss = 0
         this.ring = 0
+        // Không reset thì tay bước vào khung sẽ bị kéo lê một vệt từ chỗ cũ.
+        this.fx.reset()
+        this.fy.reset()
         this.cb.onHand({ present: false, nx: 0.5, ny: 0.5, pinch: false, palm: false, fist: false, ring: 0, label: 'đưa tay vào khung' })
       }
       return
@@ -211,36 +263,68 @@ export class HandTracker {
       .map(([tip, pip]) => d(lms[tip], w) > d(lms[pip], w) * 1.08)
     const extCount = ext.filter(Boolean).length
 
-    // Chụm ngón có TRỄ HAI NGƯỠNG: mở ra phải rộng hơn ngưỡng đóng, nếu không
-    // tay run một chút là nét đứt thành hàng chục mẩu.
-    const handScale = d(lms[0], lms[9]) || 0.001
+    // Thước chuẩn hoá phải BỀN VỚI XOAY TAY. Bản cũ chỉ lấy d(cổ tay, đốt giữa):
+    // xoay cổ tay là đoạn đó ngắn lại trong hình chiếu, pinchD phình lên và cú
+    // chụm bị coi như đã nhả → nét đứt ngay giữa lúc đang vẽ vòng. Lấy đoạn DÀI
+    // NHẤT trong bốn đốt bàn tay thì hình chiếu ổn định hơn nhiều.
+    const handScale = Math.max(d(lms[0], lms[5]), d(lms[0], lms[9]), d(lms[0], lms[13]), d(lms[0], lms[17]), 0.001)
     const pinchD = d(lms[4], lms[8]) / handScale
-    const indexReach = d(lms[8], lms[0]) / handScale
     const thr = this.state.input.pinchThreshold
-    if (!this.pinched && pinchD < thr && indexReach > 1.2) this.pinched = true
-    else if (this.pinched && (pinchD > thr * 1.45 || indexReach < 1.05)) this.pinched = false
+    // Trễ hai ngưỡng + chống rớt: phải thấy nhả liên tiếp vài frame mới thật sự
+    // nhấc bút. Một frame nhiễu không được phép cắt nét làm đôi.
+    // (Bỏ hẳn điều kiện indexReach của bản gốc — nó cũng co lại khi xoay tay,
+    // là thủ phạm thứ hai làm nét đứt.)
+    if (pinchD < thr) {
+      this.pinched = true
+      this.pinchMiss = 0
+    } else if (this.pinched && pinchD > thr * 1.45) {
+      this.pinchMiss++
+      if (this.pinchMiss >= 3) this.pinched = false
+    } else if (!this.pinched) {
+      this.pinchMiss = 0
+    }
 
     const palm = extCount >= 4 && !this.pinched
-    const fist = extCount === 0 && !this.pinched
+    const fistNow = extCount === 0 && !this.pinched
 
-    // Đầu bút = trung điểm ngón cái + ngón trỏ, lật gương cho khớp cảm giác soi gương.
-    const nx = 1 - (lms[4].x + lms[8].x) / 2
-    const ny = (lms[4].y + lms[8].y) / 2
+    // Đầu bút = trung điểm ngón cái + ngón trỏ.
+    let nx = (lms[4].x + lms[8].x) / 2
+    const nyRaw = (lms[4].y + lms[8].y) / 2
+    if (this.state.input.mirror) nx = 1 - nx
+
+    // Lọc One Euro. Đặt Ở ĐÂY chứ không phải lerp ở scene: chỉ chỗ này mới biết
+    // dấu thời gian thật của từng frame camera, mà One Euro cần dt để hoạt động.
+    const cutoff = 0.6 + (1 - Math.min(0.95, Math.max(0, this.state.input.smooth))) * 2.4
+    this.fx.setMinCutoff(cutoff)
+    this.fy.setMinCutoff(cutoff)
+    const t = performance.now() / 1000
+    const fnx = this.fx.filter(nx, t)
+    const fny = this.fy.filter(nyRaw, t)
+
+    // Nắm đấm: cho phép RỚT vài frame mà không mất tiến độ. MediaPipe đọc nắm
+    // đấm hay chớp (thỉnh thoảng một ngón bị tính là duỗi); bản cũ reset bộ đếm
+    // về 0 ngay khi có MỘT frame như vậy, nên giữ mãi cũng không bao giờ đủ.
+    const hold = Math.max(0.4, this.state.input.fistHold)
+    if (fistNow) this.fistMiss = 0
+    else this.fistMiss++
+    const fistHeld = fistNow || (this.fistTime > 0 && this.fistMiss <= 6)
 
     let label = this.pinched ? 'đang vẽ' : 'chụm ngón để vẽ'
-    if (fist && this.fistArmed) {
+    if (fistHeld && this.fistArmed) {
       this.fistTime += dt
-      this.ring = Math.min(1, this.fistTime / 1.0)
-      label = 'nắm đấm — giữ để chuyển chiều'
+      this.ring = Math.min(1, this.fistTime / hold)
+      label = `nắm đấm — giữ ${(hold - this.fistTime).toFixed(1)}s nữa`
       if (this.ring >= 1) {
         this.fistArmed = false
         this.fistTime = 0
         this.ring = 0
+        this.fistMiss = 0
         this.cb.onStageAdvance()
       }
-    } else if (fist) {
+    } else if (fistNow) {
       label = 'thả nắm đấm ra'
     } else {
+      // Chỉ nhả hẳn khi đã mất nắm đấm đủ lâu.
       this.fistArmed = true
       this.fistTime = 0
       this.ring = 0
@@ -248,9 +332,9 @@ export class HandTracker {
     }
 
     this.cb.onHand({
-      present: true, nx, ny,
-      pinch: this.pinched && !fist,
-      palm, fist,
+      present: true, nx: fnx, ny: fny,
+      pinch: this.pinched && !fistNow,
+      palm, fist: fistNow,
       ring: this.ring,
       label
     })
@@ -262,7 +346,8 @@ export class HandTracker {
     if (!g) return
     g.clearRect(0, 0, cv.width, cv.height)
     if (!lms) return
-    const X = (p: Landmark): number => (1 - p.x) * cv.width
+    const mir = this.state.input.mirror
+    const X = (p: Landmark): number => (mir ? 1 - p.x : p.x) * cv.width
     const Y = (p: Landmark): number => p.y * cv.height
     g.strokeStyle = 'rgba(167,139,250,0.75)'
     g.lineWidth = 1.5

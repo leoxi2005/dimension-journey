@@ -16,6 +16,10 @@ import { NdiService } from './ndi'
 import { KinectBridge } from './kinect'
 import { log, logEnvironment, logFile, recentLog } from './log'
 
+// Không có switch này thì AudioContext bị chặn tới khi có người bấm chuột vào
+// cửa sổ. Người tham gia điều khiển bằng TAY, không ai bấm gì cả — nên nhạc nền
+// và hiệu ứng sẽ im lặng suốt cả show.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 // Chromium mặc định bóp rAF của cửa sổ bị che/ẩn. Cửa sổ offscreen của Spout
 // và cửa sổ chiếu bị Resolume che LÀ trường hợp đó — không tắt sẽ "đứng hình".
 app.commandLine.appendSwitch('disable-background-timer-throttling')
@@ -127,6 +131,11 @@ function wireIpc(): void {
   ipcMain.handle('dj:openLog', () => shell.showItemInFolder(logFile()))
 
   ipcMain.on('dj:action', (_e, a: Action) => dispatch(a))
+
+  // Renderer ghi vào dimension.log. Không có kênh này thì trạng thái camera,
+  // MediaPipe và âm thanh hoàn toàn vô hình trong bản .exe (không có terminal),
+  // mà đó đúng là ba thứ hay hỏng nhất ở venue.
+  ipcMain.on('dj:log', (_e, tag: string, msg: string) => log(tag, msg))
 
   // Dữ liệu tay: Control -> main -> các cửa sổ hiển thị. Gói nhỏ (< 100 byte)
   // nên 60fps qua IPC không đáng kể; đổi lại camera + MediaPipe chỉ chạy ĐÚNG

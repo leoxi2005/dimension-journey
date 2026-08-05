@@ -61,8 +61,15 @@ export interface AppState {
     deviceId: string
     /** % bề ngang tường mà bàn tay với tới được (40..100). */
     reach: number
-    /** Làm mượt con trỏ 0..0.95 — cao = mượt nhưng trễ. */
+    /** Làm mượt con trỏ 0..0.95 — cao = mượt nhưng trễ. Điều khiển tần số cắt
+     *  của bộ lọc One Euro trong tracker, không phải lerp thô. */
     smooth: number
+    /** Lật gương ngang. Camera gắn trên tường nhìn về phía người thì cần lật
+     *  (mặc định); camera đặt sau lưng người thì phải tắt, không thì mọi cú
+     *  xoay tay đều ra ngược chiều. */
+    mirror: boolean
+    /** Số giây giữ nắm đấm để chuyển chiều. */
+    fistHold: number
     /** Ngưỡng chụm ngón (0.20..0.60) — chỉnh theo tay người + khoảng cách. */
     pinchThreshold: number
     /** Cổng WebSocket cho Kinect bridge. */

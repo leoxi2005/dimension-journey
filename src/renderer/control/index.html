@@ -136,12 +136,29 @@
             <input type="range" id="smooth" min="0" max="0.9" step="0.05" />
             <div class="val mono" id="smoothVal"></div>
           </div>
+          <div class="note">
+            Bộ lọc One Euro: tay đứng yên thì lọc mạnh cho hết rung, tay quét nhanh thì gần
+            như không lọc cho hết trễ. Thấy nét rung → tăng. Thấy nét đuổi không kịp → giảm.
+          </div>
           <div class="row">
             <label class="lbl">Ngưỡng chụm</label>
             <input type="range" id="pinch" min="0.2" max="0.6" step="0.01" />
             <div class="val mono" id="pinchVal"></div>
           </div>
           <div class="note">Chụm khó ăn → tăng. Tự động vẽ khi chưa chụm → giảm.</div>
+          <div class="row">
+            <label class="lbl">Giữ nắm đấm</label>
+            <input type="range" id="fistHold" min="1" max="6" step="0.5" />
+            <div class="val mono" id="fistHoldVal"></div>
+          </div>
+          <div class="note">Thời gian giữ nắm đấm để sang chiều kế tiếp. Vòng tròn trên tường chạy đủ là đổi.</div>
+          <div class="row">
+            <button id="btnMirror" class="wide">lật gương</button>
+          </div>
+          <div class="note">
+            Vẽ vòng tròn mà thấy nét chạy NGƯỢC chiều tay → bấm nút này. Camera gắn trên
+            tường nhìn về phía người thì để BẬT; camera đặt sau lưng người thì tắt.
+          </div>
           <div id="kinectBox" style="display:none">
             <div class="row">
               <label class="lbl">Cổng bridge</label>

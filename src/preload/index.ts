@@ -18,6 +18,7 @@ const api = {
 
   send: (a: Action): void => ipcRenderer.send('dj:action', a),
   sendHand: (h: HandFrame): void => ipcRenderer.send('dj:hand', h),
+  log: (tag: string, msg: string): void => ipcRenderer.send('dj:log', tag, msg),
 
   onState: (fn: (s: AppState) => void): void => {
     ipcRenderer.on('dj:state', (_e, s) => fn(s))
