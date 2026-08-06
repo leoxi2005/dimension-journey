@@ -79,6 +79,24 @@ jobs:
           }
           echo "PACKAGE=OK"
 
+      # NDI là đường ra DUY NHẤT khi Resolume nằm ở máy khác — mà đó là setup thật
+      # của show. Addon phải nằm NGOÀI asar (dlopen không đọc được trong asar) và
+      # DLL của NDI SDK phải nằm CẠNH file .node, vì Windows tìm DLL phụ thuộc ngay
+      # trong thư mục của module vừa nạp. Thiếu một trong hai thì app vẫn mở bình
+      # thường, chỉ im lặng không phát gì — kiểu hỏng tệ nhất, phải chặn từ đây.
+      - name: Verify NDI addon shipped in package
+        shell: pwsh
+        run: |
+          $d = "dist/win-unpacked/resources/app.asar.unpacked/node_modules/@stagetimerio/grandiose/dist"
+          foreach ($f in @("grandiose.node","Processing.NDI.Lib.x64.dll")) {
+            $q = Join-Path $d $f
+            if (!(Test-Path $q)) { throw "THIEU $q — .exe đóng gói KHÔNG phát được NDI" }
+            $b = [System.IO.File]::ReadAllBytes($q)
+            if ($b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw "$q không phải binary Windows" }
+            echo "  $f OK ($($b.Length) bytes)"
+          }
+          echo "NDI_ADDON=OK"
+
       - name: Package KinectBridge
         shell: pwsh
         run: |
