@@ -204,40 +204,121 @@ export class HandTracker {
   }
 
   // ------------------------------------------------------------ nguồn ảnh
-  async openCamera(deviceId: string): Promise<void> {
-    this.closeCamera()
+  /** Danh sách camera. Nhãn (label) CHỈ có sau khi đã được cấp quyền camera —
+   *  gọi trước lần getUserMedia đầu tiên thì Chromium trả về danh sách rỗng nhãn,
+   *  và mọi phép chọn theo tên đều mù. */
+  static async listVideoInputs(): Promise<MediaDeviceInfo[]> {
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        // Xin 60fps: mỗi frame camera thiếu là thêm ~33ms trễ mà không cách nào
-        // bù lại được ở phía sau. 'ideal' nên camera 30fps vẫn nhận bình thường.
-        video: deviceId
-          ? { deviceId: { exact: deviceId }, width: 640, height: 480, frameRate: { ideal: 60 } }
-          : { width: 640, height: 480, facingMode: 'user', frameRate: { ideal: 60 } }
-      })
-      this.video.muted = true
-      this.video.playsInline = true
-      this.video.autoplay = true
-      this.video.srcObject = this.stream
-      await this.video.play()
-      const tr0 = this.stream.getVideoTracks()[0]
-      const st = tr0 && tr0.getSettings ? tr0.getSettings() : ({} as MediaTrackSettings)
-      this.camInfo = `${st.width || '?'}×${st.height || '?'} @${Math.round(st.frameRate || 0)}fps`
-      // fps camera là con số quyết định cảm giác nhạy. Webcam Windows hay chỉ cho
-      // 30fps, và tụt còn 15fps khi phòng thiếu sáng — phải biết chắc, không đoán.
-      window.dj.log('camera', `${tr0 ? tr0.label : '?'} — ${this.camInfo}`)
-      if ((st.frameRate || 0) < 25) {
-        window.dj.log('camera', `CẢNH BÁO: camera chỉ ${Math.round(st.frameRate || 0)}fps — cử chỉ sẽ kém nhạy. Thêm đèn hoặc đổi webcam 60fps.`)
-      }
-      this.cb.onStatus(`camera đang chạy · ${this.camInfo}`, 'ok')
-    } catch (e) {
-      this.cb.onStatus(`không mở được camera: ${(e as Error).message}`, 'bad')
+      const devs = await navigator.mediaDevices.enumerateDevices()
+      return devs.filter((d) => d.kind === 'videoinput')
+    } catch {
+      return []
     }
   }
 
+  /** Thứ tự ưu tiên khi tự chọn camera. Cao hơn = chọn trước.
+   *    2 — webcam rời (cái operator chĩa vào người tham gia ở venue)
+   *    1 — camera tích hợp máy (FaceTime/laptop): chạy được nhưng góc thường sai
+   *    0 — Continuity Camera (iPhone/iPad) và camera ảo (OBS…): KHÔNG bao giờ tự
+   *        chọn. macOS rất hay lấy đúng iPhone làm mặc định — đã đo thật trên máy
+   *        này — mà ở venue cái iPhone đó nằm trong túi ai đó hoặc rớt giữa show.
+   *  Vẫn chọn được bằng tay trong danh sách; đây chỉ là mặc định cho lần đầu. */
+  static camRank(label: string): number {
+    if (/iphone|ipad|continuity|virtual|obs|snap|droidcam|epoccam/i.test(label)) return 0
+    if (/facetime|built-?in|integrated|macbook|internal/i.test(label)) return 1
+    return 2
+  }
+
+  /** deviceId của camera ĐANG mở (theo báo cáo của chính track) — dùng để biết
+   *  cú fallback đã rơi vào máy nào, chứ không phải máy mình xin. */
+  currentDeviceId = ''
+  currentLabel = ''
+  private wantedDeviceId = ''
+  private reopenTimer: ReturnType<typeof setTimeout> | null = null
+
+  async openCamera(deviceId: string): Promise<void> {
+    this.closeCamera()
+    this.wantedDeviceId = deviceId
+    // Xin 60fps: mỗi frame camera thiếu là thêm ~33ms trễ mà không cách nào bù
+    // lại được ở phía sau. 'ideal' nên camera 30fps vẫn nhận bình thường.
+    const base = { width: 640, height: 480, frameRate: { ideal: 60 } }
+    // Luôn có đường lùi: webcam bị rút, bị app khác chiếm, hay deviceId cũ từ
+    // phiên trước không còn tồn tại thì 'exact' ném lỗi và app đứng hình câm.
+    // Thà chạy bằng camera khác còn hơn cả show không có tracking.
+    const attempts: MediaStreamConstraints[] = deviceId
+      ? [{ video: { ...base, deviceId: { exact: deviceId } } }, { video: { ...base } }]
+      : [{ video: { ...base, facingMode: 'user' } }, { video: true }]
+
+    let stream: MediaStream | null = null
+    let lastErr: Error | null = null
+    for (let i = 0; i < attempts.length; i++) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(attempts[i])
+        if (i > 0) window.dj.log('camera', `camera đã chọn không mở được (${lastErr?.message}) — lùi về camera bất kỳ`)
+        break
+      } catch (e) {
+        lastErr = e as Error
+      }
+    }
+    if (!stream) {
+      const m = lastErr?.message || 'không rõ'
+      this.cb.onStatus(`không mở được camera: ${m}`, 'bad')
+      // NotAllowedError trên Windows thường là do "Cho phép ứng dụng máy tính
+      // truy cập camera" đang tắt, chứ không phải app sai — nói thẳng ra để
+      // operator khỏi ngồi dò code.
+      window.dj.log('camera', `MỞ CAMERA HỎNG: ${lastErr?.name || ''} ${m}` +
+        (lastErr?.name === 'NotAllowedError' ? ' — kiểm tra Quyền riêng tư > Camera của hệ điều hành' : '') +
+        (lastErr?.name === 'NotReadableError' ? ' — camera đang bị app khác chiếm (Zoom/OBS/Teams)' : ''))
+      return
+    }
+
+    this.stream = stream
+    this.video.muted = true
+    this.video.playsInline = true
+    this.video.autoplay = true
+    this.video.srcObject = stream
+    await this.video.play()
+    const tr0 = stream.getVideoTracks()[0]
+    const st = tr0 && tr0.getSettings ? tr0.getSettings() : ({} as MediaTrackSettings)
+    this.currentDeviceId = st.deviceId || ''
+    this.currentLabel = tr0 ? tr0.label : ''
+    this.camInfo = `${st.width || '?'}×${st.height || '?'} @${Math.round(st.frameRate || 0)}fps`
+    // fps camera là con số quyết định cảm giác nhạy. Webcam Windows hay chỉ cho
+    // 30fps, và tụt còn 15fps khi phòng thiếu sáng — phải biết chắc, không đoán.
+    window.dj.log('camera', `${this.currentLabel || '?'} — ${this.camInfo}`)
+    if ((st.frameRate || 0) < 25) {
+      window.dj.log('camera', `CẢNH BÁO: camera chỉ ${Math.round(st.frameRate || 0)}fps — cử chỉ sẽ kém nhạy. Thêm đèn hoặc đổi webcam 60fps.`)
+    }
+    // Camera bị rút giữa show: track 'ended' là tín hiệu DUY NHẤT. Không bắt thì
+    // tick() lặng lẽ thoát mỗi frame, ô xem trước đứng hình mà bảng vẫn báo
+    // "camera đang chạy" — operator đứng nhìn không hiểu chuyện gì.
+    if (tr0) {
+      tr0.addEventListener('ended', () => {
+        if (this.dead) return
+        window.dj.log('camera', `MẤT camera "${this.currentLabel}" (bị rút hoặc app khác chiếm) — thử mở lại sau 1.5s`)
+        this.cb.onStatus('mất camera — đang thử mở lại…', 'bad')
+        if (this.reopenTimer) clearTimeout(this.reopenTimer)
+        this.reopenTimer = setTimeout(() => {
+          if (!this.dead && this.state.input.source === 'camera') void this.openCamera(this.wantedDeviceId)
+        }, 1500)
+      })
+    }
+    this.cb.onStatus(`${this.currentLabel || 'camera'} · ${this.camInfo}`, 'ok')
+  }
+
   closeCamera(): void {
+    if (this.reopenTimer) {
+      clearTimeout(this.reopenTimer)
+      this.reopenTimer = null
+    }
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop())
     this.stream = null
     this.video.srcObject = null
+    this.currentDeviceId = ''
+    this.currentLabel = ''
+    // Không xoá thì frame CŨ của camera trước vẫn được coi là "đã xử lý", và
+    // camera mới có cùng currentTime sẽ bị bỏ qua.
+    this.lastVideoTime = -1
   }
 
   /** Frame từ Kinect bridge — nhị phân (nhanh) hoặc JSON+JPEG (tương thích). */

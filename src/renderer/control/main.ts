@@ -176,15 +176,19 @@ function wire(): void {
     b.onclick = (): void => {
       const src = b.dataset.src as AppState['input']['source']
       window.dj.send({ type: 'setInput', patch: { source: src } })
-      if (src === 'camera') void tracker?.openCamera(state.input.deviceId)
+      if (src === 'camera') void tracker?.openCamera(state.input.deviceId).then(() => listCameras())
       else tracker?.closeCamera()
     }
   })
 
   $('camSel').onchange = (e): void => {
-    const id = (e.target as HTMLSelectElement).value
+    const el = e.target as HTMLSelectElement
+    const id = el.value
+    // Nhớ lựa chọn: operator chỉnh camera ở venue một lần, các lần chạy sau phải
+    // vào đúng camera đó chứ không quay về mặc định của hệ điều hành.
+    saveCam(id, el.selectedOptions[0]?.textContent || '')
     window.dj.send({ type: 'setInput', patch: { deviceId: id } })
-    void tracker?.openCamera(id)
+    void tracker?.openCamera(id).then(() => listCameras())
   }
   $('btnRecam').onclick = (): void => void listCameras()
   $('btnCalib').onclick = (): void => {
@@ -302,10 +306,27 @@ function wire(): void {
   window.addEventListener('pointerdown', () => audio.ensure(), { once: false })
 }
 
-async function listCameras(): Promise<void> {
+// ------------------------------------------------------------------- camera
+// Lựa chọn camera được nhớ Ở ĐÂY chứ không ở store của main: state trong main
+// dựng lại từ đầu mỗi lần chạy, nên không nhớ thì mỗi lần khởi động app lại
+// quay về camera mặc định của hệ điều hành — trên macOS là "Camera iPhone".
+const CAM_KEY = 'dj.camera'
+
+function savedCam(): { id: string; label: string } | null {
   try {
-    const devs = await navigator.mediaDevices.enumerateDevices()
-    const cams = devs.filter((d) => d.kind === 'videoinput')
+    const raw = localStorage.getItem(CAM_KEY)
+    return raw ? (JSON.parse(raw) as { id: string; label: string }) : null
+  } catch { return null }
+}
+
+function saveCam(id: string, label: string): void {
+  try { localStorage.setItem(CAM_KEY, JSON.stringify({ id, label })) } catch { /* không nhớ được cũng không sao */ }
+}
+
+async function listCameras(): Promise<MediaDeviceInfo[]> {
+  let cams: MediaDeviceInfo[] = []
+  try {
+    cams = await HandTracker.listVideoInputs()
     const sel = $('camSel') as HTMLSelectElement
     sel.innerHTML = ''
     const def = document.createElement('option')
@@ -318,8 +339,71 @@ async function listCameras(): Promise<void> {
       o.textContent = c.label || `Camera ${i + 1}`
       sel.appendChild(o)
     })
-    sel.value = state.input.deviceId
+    // Hiện đúng camera ĐANG chạy, không phải cái mình xin: nếu deviceId cũ không
+    // còn thì tracker đã lùi về camera khác, và ô chọn phải nói thật.
+    const live = tracker?.currentDeviceId || ''
+    sel.value = cams.some((c) => c.deviceId === live) ? live : state.input.deviceId
   } catch { /* chưa có quyền camera thì danh sách rỗng, không sao */ }
+  return cams
+}
+
+/** Chọn camera cho lần mở đầu tiên, theo thứ tự: cái operator đã chọn lần trước
+ *  (khớp deviceId, không khớp thì khớp theo TÊN — deviceId đổi khi cắm cổng USB
+ *  khác) → webcam thật đầu tiên → thôi thì camera nào cũng được.
+ *  Chạy SAU khi đã mở camera một lần, vì trước đó enumerateDevices không có tên. */
+async function autoPickCamera(): Promise<void> {
+  const cams = await listCameras()
+  if (cams.length === 0) return
+  const saved = savedCam()
+  let want = ''
+  if (saved) {
+    const byId = cams.find((c) => c.deviceId === saved.id)
+    const byLabel = cams.find((c) => c.label && c.label === saved.label)
+    want = (byId || byLabel)?.deviceId || ''
+    if (!byId && byLabel) window.dj.log('camera', `deviceId đổi nhưng tìm lại được theo tên: ${saved.label}`)
+    if (!byId && !byLabel) window.dj.log('camera', `camera đã lưu ("${saved.label}") không còn — chọn lại`)
+  }
+  if (!want) {
+    // Điểm cao nhất thắng; bằng điểm thì giữ thứ tự hệ điều hành trả về.
+    const best = cams.reduce((a, b) =>
+      HandTracker.camRank(b.label) > HandTracker.camRank(a.label) ? b : a
+    )
+    want = best.deviceId
+    if (best.deviceId !== cams[0].deviceId) {
+      window.dj.log('camera', `tự chọn "${best.label}" thay vì mặc định "${cams[0].label}"`)
+    }
+  }
+  const chosen = cams.find((c) => c.deviceId === want)
+  if (want && want !== tracker?.currentDeviceId) {
+    window.dj.send({ type: 'setInput', patch: { deviceId: want } })
+    await tracker?.openCamera(want)
+    await listCameras()
+  }
+  saveCam(want, chosen?.label || '')
+}
+
+/** Cắm/rút camera lúc app đang chạy. Người dùng vừa mua webcam mới thì cắm vào là
+ *  phải thấy ngay trong danh sách, không phải khởi động lại app. */
+async function onDeviceChange(): Promise<void> {
+  const cams = await listCameras()
+  const live = tracker?.currentDeviceId || ''
+  window.dj.log('camera', `danh sách camera đổi (${cams.length}): ${cams.map((c) => c.label || '?').join(' | ')}`)
+  if (state.input.source !== 'camera') return
+  const cur = cams.find((c) => c.deviceId === live)
+  if (cur) {
+    // Vừa cắm webcam rời trong khi đang chạy bằng camera laptop: KHÔNG tự đổi
+    // (đang diễn mà hình nhảy sang camera khác thì hỏng), chỉ mách một câu.
+    const better = cams.find((c) => HandTracker.camRank(c.label) > HandTracker.camRank(cur.label))
+    if (better) window.dj.log('camera', `có camera phù hợp hơn: "${better.label}" — chọn trong danh sách nếu muốn dùng`)
+  }
+  if (live && !cams.some((c) => c.deviceId === live)) {
+    // Camera đang dùng vừa bị rút. Track 'ended' cũng bắt được, nhưng không phải
+    // driver nào cũng bắn 'ended' — đây là lưới thứ hai.
+    window.dj.log('camera', 'camera đang dùng đã bị rút — chọn lại camera khác')
+    await autoPickCamera()
+  } else if (!live) {
+    await autoPickCamera()
+  }
 }
 
 // ---------------------------------------------------------------- vòng chạy
@@ -410,8 +494,15 @@ async function boot(): Promise<void> {
     b.classList.remove('on')
   }
   await tracker.init()
-  if (state.input.source === 'camera') await tracker.openCamera(state.input.deviceId)
-  await listCameras()
+  if (state.input.source === 'camera') {
+    // Mở phát đầu bằng camera đã lưu (nếu có) — vừa xin quyền, vừa làm
+    // enumerateDevices hiện được TÊN camera cho bước chọn lại ngay sau đó.
+    await tracker.openCamera(savedCam()?.id || '')
+    await autoPickCamera()
+  } else {
+    await listCameras()
+  }
+  navigator.mediaDevices.addEventListener('devicechange', () => void onDeviceChange())
 
   window.dj.onKinectFrame((frame) => tracker?.onKinectFrame(frame))
 
