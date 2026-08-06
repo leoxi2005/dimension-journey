@@ -1,5 +1,7 @@
 // ============================================================================
-// NdiService — đường ra DỰ PHÒNG (khi Resolume nằm ở máy khác).
+// NdiService — ĐƯỜNG RA CHÍNH của show: app chạy ở một máy, Resolume Arena ở máy
+// khác. Spout chia sẻ texture trong bộ nhớ GPU nên không bao giờ vượt được sang
+// máy thứ hai; NDI đi qua mạng nên vượt được. Đó là toàn bộ lý do phải chọn NDI.
 //
 // NDI đi đường CPU: mỗi frame 10350×1080 = 44.7MB copy về RAM rồi nén SpeedHQ.
 //
@@ -10,10 +12,11 @@
 // Nhẹ hơn nhiều so với con số 33-52ms ở project DAY3 trước, vì ở đó có tới HAI
 // bề mặt (tường + sàn) cùng copy trên một main thread.
 //
-// Dù vậy vẫn mặc định TẮT: cùng máy với Resolume thì Spout (GPU, zero-copy)
-// nhanh hơn hẳn, và bật cả hai nghĩa là render scene thêm một lần nữa.
+// Mặc định BẬT. Chỉ tắt khi đổi sang setup một máy (lúc đó dùng Spout), vì bật
+// cả hai đường nghĩa là render scene thêm một lần nữa mà chẳng để làm gì.
 // ============================================================================
 import { BrowserWindow, screen } from 'electron'
+import { hostname } from 'os'
 import { Output, OutputKey, NdiStatus } from '../shared/types'
 import { PRELOAD_PATH, loadOutputRenderer } from './windows'
 import { log } from './log'
@@ -46,6 +49,7 @@ interface Stream {
   inflight: boolean // KHÔNG BAO GIỜ cho >1 frame inflight: NDI SDK không thread-safe
   note: string
   starting: boolean
+  slowMark: number // lần cuối kêu tụt fps — để không spam log
 }
 
 export class NdiService {
@@ -54,6 +58,18 @@ export class NdiService {
 
   available(): boolean {
     return !!(ndi && ndi.send)
+  }
+
+  /** Ghi thẳng vào log lúc khởi động. NDI là đường ra DUY NHẤT khi Resolume nằm ở
+   *  máy khác — nếu addon không nạp được thì phải biết NGAY lúc mở app, chứ không
+   *  phải lúc đứng ở venue nhìn Resolume trống trơn. */
+  logAvailability(): void {
+    if (this.available()) {
+      log('ndi', 'addon @stagetimerio/grandiose nạp OK — sẵn sàng phát')
+    } else {
+      log('ndi', `ADDON KHÔNG NẠP ĐƯỢC: ${loadReason || 'không rõ'}`)
+      log('ndi', 'không có addon thì KHÔNG có đường ra nào sang máy khác (Spout chỉ chạy trong cùng một máy)')
+    }
   }
 
   status(): NdiStatus {
@@ -118,7 +134,8 @@ export class NdiService {
     })
     const st: Stream = {
       win, sender: null, name, resW, resH, reqFps: fps, sent: 0, fps: 0,
-      fpsMark: Date.now(), fpsCount: 0, copyMs: 0, inflight: false, note: '', starting: true
+      fpsMark: Date.now(), fpsCount: 0, copyMs: 0, inflight: false, note: '', starting: true,
+      slowMark: 0
     }
     this.streams[role] = st
 
@@ -166,7 +183,15 @@ export class NdiService {
       )
         .then(() => {
           if (st.sent === 0) {
-            log('ndi', `${role}: ĐANG PHÁT "${name}" ${sz.width}x${sz.height} @${st.reqFps}fps`)
+            // Tên máy phát nằm trong tên nguồn NDI: bên Resolume sẽ thấy là
+            // "TÊNMÁY (DimensionWall)". Ghi ra để lúc dò nguồn còn biết tìm gì.
+            log('ndi', `${role}: ĐANG PHÁT "${name}" ${sz.width}x${sz.height} @${st.reqFps}fps` +
+              ` — bên Resolume tìm nguồn "${hostname()} (${name})"`)
+            // Quy đổi từ mốc thật của NDI High Bandwidth: 1080p60 (124 triệu
+            // pixel/giây) ≈ 125 Mbps. Tức là xấp xỉ 1 Mbps cho mỗi triệu pixel
+            // mỗi giây. Đừng tính theo "nén 1:10" — sai gấp ba lần.
+            const mbps = Math.round((sz.width * sz.height * st.reqFps) / 1e6)
+            log('ndi', `băng thông ước tính ~${mbps} Mbps — cần dây gigabit, KHÔNG dùng WiFi`)
             this.lastError = ''
           }
           st.sent++
@@ -176,6 +201,15 @@ export class NdiService {
             st.fps = Math.round((st.fpsCount * 1000) / (now - st.fpsMark))
             st.fpsMark = now
             st.fpsCount = 0
+            // Tụt fps là thứ khán giả nhìn thấy trước cả khi operator kịp nhận ra.
+            // Nói thẳng cả con số lẫn cách chữa, mỗi 10s một lần cho khỏi ngập log.
+            // Bỏ qua vài giây đầu: giây đầu tiên luôn thiếu frame vì cửa sổ
+            // offscreen còn đang dựng scene, kêu lúc đó là kêu oan.
+            if (st.sent > st.reqFps * 3 && st.fps < st.reqFps * 0.7 && now - st.slowMark > 10000) {
+              st.slowMark = now
+              log('ndi', `${role}: CHỈ RA ${st.fps}/${st.reqFps}fps (copy ${st.copyMs}ms/frame)` +
+                ' — hạ "Res gửi" xuống 75%/50%, hoặc tắt bớt bề mặt sàn')
+            }
           }
         })
         .catch((err: Error) => {

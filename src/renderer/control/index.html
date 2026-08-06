@@ -91,7 +91,7 @@
             <div class="t">DIMENSION JOURNEY</div>
             <div class="s mono">0D → 5D</div>
           </div>
-          <div class="note">Tường <span id="wallLabel" class="mono">10350×1080</span> · Spout → Resolume Arena</div>
+          <div class="note">Tường <span id="wallLabel" class="mono">10350×1080</span> · NDI → Resolume Arena (máy khác)</div>
           <div class="row" style="margin-top:12px">
             <div class="dims" id="dims" style="flex:1"></div>
           </div>
@@ -199,8 +199,8 @@
             <button id="btnFs">toàn màn hình</button>
           </div>
           <div class="note warn" id="dupWarn" style="display:none">
-            Cửa sổ chiếu đang mở ⇒ scene render 2 lần (1 cho màn hình + 1 cho Spout). Lúc chạy show
-            nên ĐÓNG cửa sổ này, Resolume vẫn nhận Spout bình thường.
+            Cửa sổ chiếu đang mở ⇒ scene render 2 lần (1 cho màn hình + 1 cho luồng gửi đi). Lúc
+            chạy show nên ĐÓNG cửa sổ này, máy bên kia vẫn nhận NDI bình thường.
           </div>
         </div>
 
@@ -238,13 +238,52 @@
           </div>
           <div class="note warn" id="fSendWarn" style="display:none">
             Bật sàn là render thêm một bề mặt nữa: tường 11,2 triệu + sàn 8,3 triệu =
-            <b>19,5 triệu pixel mỗi frame</b>, gần gấp đôi tải GPU. Xem fps thật ở ô Spout.
+            <b>19,5 triệu pixel mỗi frame</b>, gần gấp đôi tải GPU và gần gấp đôi băng thông mạng. Xem fps thật ở ô NDI.
           </div>
         </div>
 
         <div class="card">
-          <h2>Spout — đường ra chính</h2>
+          <h2>NDI — đường ra chính (Resolume ở máy khác)</h2>
           <div class="row">
+            <button id="btnNdi" class="wide">bật NDI</button>
+            <div class="seg" style="flex:1">
+              <button class="fps" data-fps="30" data-t="ndi">30</button>
+              <button class="fps" data-fps="60" data-t="ndi">60</button>
+            </div>
+          </div>
+          <div class="row">
+            <label class="lbl">Res gửi</label>
+            <div class="seg" style="flex:1">
+              <button class="scale" data-scale="100" data-t="ndi">100%</button>
+              <button class="scale" data-scale="75" data-t="ndi">75%</button>
+              <button class="scale" data-scale="50" data-t="ndi">50%</button>
+            </div>
+          </div>
+          <div class="status" style="margin-top:10px">
+            <div class="dot warn" id="ndiDot"></div>
+            <div id="ndiText" class="mono">—</div>
+          </div>
+          <div class="note">
+            Máy chạy Resolume mở <b>Sources → NDI</b> và tìm nguồn tên
+            <b class="mono">DimensionWall</b>. Không thấy thì theo thứ tự:
+            hai máy phải <b>cùng lớp mạng</b> (dây gigabit, đừng WiFi) · mở
+            <b>Windows Defender Firewall</b> cho app (cả Private lẫn Public) ·
+            máy nhận cài <b>NDI Tools/Runtime</b>.
+          </div>
+          <div class="note">
+            Đo thật: 10350×1080 @30fps giữ đủ 30fps, copy 5–6 ms/frame. Xin 60fps vẫn chỉ ra ~30.
+            Mạng gánh khoảng <b>300–400 Mbps</b> ở 100% — rớt fps thì hạ Res gửi xuống 75% hoặc 50%
+            trước khi đổ tại máy.
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Spout — chỉ khi Resolume CÙNG một máy</h2>
+          <div class="note">
+            Spout chia sẻ texture trong bộ nhớ GPU nên <b>không qua được sang máy khác</b>.
+            Show này chạy hai máy ⇒ để TẮT; bật lên chỉ khiến scene render thừa một lần.
+          </div>
+          <div class="row" style="margin-top:10px">
             <button id="btnSpout" class="wide">bật Spout</button>
             <div class="seg" style="flex:1">
               <button class="fps" data-fps="30" data-t="spout">30</button>
@@ -266,34 +305,6 @@
           <div class="note bad" id="spoutReason"></div>
           <div class="row"><button id="btnLog">mở file log</button></div>
           <pre id="logbox" class="mono"></pre>
-        </div>
-
-        <div class="card">
-          <h2>NDI — chỉ khi Resolume ở máy khác</h2>
-          <div class="row">
-            <button id="btnNdi" class="wide">bật NDI</button>
-            <div class="seg" style="flex:1">
-              <button class="fps" data-fps="30" data-t="ndi">30</button>
-              <button class="fps" data-fps="60" data-t="ndi">60</button>
-            </div>
-          </div>
-          <div class="row">
-            <label class="lbl">Res gửi</label>
-            <div class="seg" style="flex:1">
-              <button class="scale" data-scale="100" data-t="ndi">100%</button>
-              <button class="scale" data-scale="75" data-t="ndi">75%</button>
-              <button class="scale" data-scale="50" data-t="ndi">50%</button>
-            </div>
-          </div>
-          <div class="status" style="margin-top:10px">
-            <div class="dot warn" id="ndiDot"></div>
-            <div id="ndiText" class="mono">—</div>
-          </div>
-          <div class="note">
-            Đo thật trên máy dev: 10350×1080 @30fps giữ đủ 30fps, copy 5–6 ms/frame — dùng được.
-            Xin 60fps vẫn chỉ ra ~30fps. Cùng máy với Resolume thì cứ Spout: nhanh hơn và
-            bật cả hai là scene phải render thêm một lần nữa.
-          </div>
         </div>
 
         <div class="card">

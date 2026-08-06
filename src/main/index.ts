@@ -164,6 +164,7 @@ if (!app.requestSingleInstanceLock()) {
     logEnvironment()
     log('app', `DIMENSION JOURNEY ${app.getVersion()} — tường ${state.outputs[0].resW}×${state.outputs[0].resH}`)
     spout.logGpu()
+    ndi.logAvailability()
 
     kinect.target = () => wm.getControl()
     wm.onOutputClosed = (role) => {

@@ -90,7 +90,8 @@ function render(): void {
 
   setToggle($('btnOpen'), wall.open, 'đóng cửa sổ', 'mở cửa sổ')
   setToggle($('btnFs'), wall.mode === 'fullscreen', 'toàn màn hình: bật', 'toàn màn hình')
-  $('dupWarn').style.display = wall.open && state.spout.running ? 'block' : 'none'
+  // Cảnh báo render 2 lần áp cho CẢ hai đường ra, không riêng Spout.
+  $('dupWarn').style.display = wall.open && (state.spout.running || state.ndi.running) ? 'block' : 'none'
 
   setToggle($('btnSpout'), state.spout.running, 'Spout: ĐANG PHÁT', 'bật Spout')
   setToggle($('btnNdi'), state.ndi.running, 'NDI: ĐANG PHÁT', 'bật NDI')
@@ -144,10 +145,15 @@ function renderStatus(s: { spout: SpoutStatus; ndi: NdiStatus; kinect: KinectSta
   const ns = nd.streams[0]
   if (!nd.available) {
     setDot('ndiDot', 'bad')
-    $('ndiText').textContent = 'chưa cài grandiose'
+    // Mất NDI là mất đường ra DUY NHẤT sang máy Resolume — không được nói nhẹ.
+    $('ndiText').textContent = 'KHÔNG phát được: addon NDI không nạp'
   } else if (ns && ns.sent > 0) {
-    setDot('ndiDot', 'ok')
-    $('ndiText').textContent = `${ns.name} · ${ns.w}×${ns.h} · ${ns.fps}fps · copy ${ns.copyMs}ms`
+    // fps thật so với fps xin: tụt là thấy ngay ở đây, không phải đợi khán giả thấy.
+    const slow = ns.fps > 0 && ns.fps < state.ndi.fps * 0.7
+    setDot('ndiDot', slow ? 'warn' : 'ok')
+    $('ndiText').textContent =
+      `${ns.name} · ${ns.w}×${ns.h} · ${ns.fps}/${state.ndi.fps}fps · copy ${ns.copyMs}ms` +
+      (slow ? ' · TỤT — hạ Res gửi' : '')
   } else {
     setDot('ndiDot', 'warn')
     $('ndiText').textContent = state.ndi.running ? 'đang chờ frame đầu tiên…' : 'đang tắt'

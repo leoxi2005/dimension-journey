@@ -21,11 +21,14 @@ export function initialState(): AppState {
     clearNonce: 0,
     sound: true,
     outputs: [WALL, FLOOR],
-    // Spout = đường ra chính (cùng máy Windows với Resolume Arena).
-    spout: { running: true, fps: 60, scale: 100 },
-    // NDI mặc định TẮT: 10350×1080 ≈ 45MB/frame, copy trên main thread sẽ kéo
-    // giật cả show. Chỉ bật khi Resolume nằm ở máy khác.
-    ndi: { running: false, fps: 30, scale: 100 },
+    // Spout mặc định TẮT: Spout chia sẻ TEXTURE GPU nên chỉ chạy được khi app và
+    // Resolume ở CÙNG một máy Windows. Setup thật của show là hai máy khác nhau,
+    // nên bật Spout chỉ tổ render scene thêm một lần vô ích.
+    spout: { running: false, fps: 60, scale: 100 },
+    // NDI = đường ra chính: đi qua mạng nên vượt được sang máy chạy Resolume.
+    // 30fps chứ không 60: mỗi frame 10350×1080 là 44.7MB copy về RAM, và đo thật
+    // thì xin 60 vẫn chỉ ra ~30 (offscreen render raster bằng CPU).
+    ndi: { running: true, fps: 30, scale: 100 },
     input: {
       source: 'camera', deviceId: '', reach: 45, smooth: 0.3,
       mirror: true, fistHold: 0.5, pinchThreshold: 0.55, kinectPort: 9010

@@ -1,7 +1,7 @@
 # DIMENSION JOURNEY 0D → 5D
 
 App desktop cho phần tương tác Day 3 — Bali projection mapping.
-Tường **10350 × 1080**, ra **Spout** (chính) và **NDI** (dự phòng) cho **Resolume Arena**.
+Tường **10350 × 1080**, ra **NDI** (chính, Resolume ở máy khác) hoặc **Spout** (khi cùng một máy).
 Tương tác bằng bàn tay: chụm ngón để vẽ, nắm đấm giữ 4s để chuyển chiều, xoè bàn tay để xoay trường 5D.
 
 Nội dung, màu, âm thanh, sáu chiều — giữ nguyên bản prototype
@@ -43,11 +43,12 @@ Cửa sổ **Operator** mở ra. Cửa sổ chiếu và Spout/NDI bật từ tro
                  │  MAIN — store + broadcast    │
                  └───┬───────────┬──────────┬───┘
                      ▼           ▼          ▼
-              cửa sổ chiếu   offscreen   offscreen
-              (canh máy)      Spout        NDI
+              cửa sổ chiếu   offscreen    offscreen
+              (canh máy)       NDI          Spout
                                 │            │
-                                ▼            ▼
-                          Resolume Arena  (máy khác)
+                                │            └─ chỉ khi CÙNG một máy
+                                ▼
+                      Resolume Arena ở MÁY KHÁC (dây gigabit)
 ```
 
 **Camera, MediaPipe và âm thanh chỉ tồn tại đúng một bản, ở cửa sổ Control.**
@@ -73,20 +74,42 @@ Kinect chỉ đóng vai **nguồn hình**.
 
 ## Đường ra
 
-**Spout** — cùng máy Windows với Resolume. **Đã verify chạy thật vào Resolume Arena.**
-Toàn bộ đi trên GPU: offscreen render với
-`useSharedTexture`, lấy shared D3D11 handle, đẩy thẳng qua SpoutDX. Không đọc pixel về
-RAM, không nén. Trong Resolume thêm nguồn **Spout In → `DimensionWall`**.
+Show chạy **hai máy**: một máy chạy app, một máy chạy Resolume Arena. Vì vậy đường ra
+chính là **NDI**; **Spout mặc định TẮT** — Spout chia sẻ texture trong bộ nhớ GPU nên
+không bao giờ vượt được sang máy thứ hai.
 
-**NDI** — chỉ khi Resolume ở máy khác. Số đo thật trên máy dev (M4 Max):
+**NDI** — mặc định BẬT, 30fps, 100% res. Số đo thật (M4 Max, chỉ bề mặt tường):
 
-| Res gửi | fps xin | fps thật | copy/frame |
-|---|---|---|---|
-| 10350×1080 | 30 | 30 | 5–6 ms |
-| 5176×540 (50%) | 30 | 30 | 1–2 ms |
-| 10350×1080 | 60 | ~30 | 5–6 ms |
+| Res gửi | fps xin | fps thật | copy/frame | băng thông |
+|---|---|---|---|---|
+| 10350×1080 | 30 | 27–30 | 5–6 ms | ~335 Mbps |
+| 5176×540 (50%) | 30 | 30 | 1–2 ms | ~84 Mbps |
+| 10350×1080 | 60 | ~30 | 5–6 ms | — |
 
-Xin 60fps vẫn chỉ ra ~30 vì offscreen render trên macOS raster bằng CPU.
+Xin 60fps vẫn chỉ ra ~30 vì cửa sổ offscreen raster bằng CPU. Băng thông quy đổi từ mốc
+thật của NDI High Bandwidth (1080p60 ≈ 125 Mbps), **không** theo kiểu "nén 1:10" — sai
+gấp ba lần.
+
+### Nối được hai máy — làm theo thứ tự này
+
+1. **Dây gigabit, đừng WiFi.** 335 Mbps chạy trên WiFi thì hình giật và trễ, không cứu
+   được bằng cách chỉnh app. Hai máy cắm chung một switch gigabit.
+2. Hai máy **cùng lớp mạng** (ví dụ `192.168.18.x`). NDI dò nguồn bằng mDNS, khác lớp
+   mạng là không thấy nhau.
+3. Máy chạy app: mở **Windows Defender Firewall** cho `DIMENSION JOURNEY.exe`, tick
+   **cả Private lẫn Public**. Đây là lý do số một khiến máy kia không thấy nguồn.
+4. Máy chạy Resolume: cài **NDI Tools / NDI Runtime**, rồi **Sources → NDI** tìm
+   `TÊNMÁY (DimensionWall)`.
+5. Xem `dimension.log` ở máy app: nó ghi đúng tên nguồn cần tìm, băng thông ước tính, và
+   kêu ngay khi fps thật tụt dưới 70% mức xin.
+
+Rớt fps thì hạ **Res gửi** xuống 75% hoặc 50% trước khi đổ tại máy — 50% chỉ tốn 1/4
+băng thông và trên màn LED dài 10350px gần như không nhìn ra khác biệt.
+
+**Spout** — chỉ bật khi đổi về setup MỘT máy. Đi hoàn toàn trên GPU: offscreen render với
+`useSharedTexture`, lấy shared D3D11 handle, đẩy thẳng qua SpoutDX, không đọc pixel về
+RAM. **Đã verify chạy thật vào Resolume Arena.** Trong Resolume thêm nguồn
+**Spout In → `DimensionWall`**.
 
 **Lúc chạy show nên ĐÓNG cửa sổ chiếu.** Nó không liên quan gì tới Spout/NDI, mà mở ra
 là scene phải render thêm một lần nữa. Control có cảnh báo sẵn khi bạn để mở.
