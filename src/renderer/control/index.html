@@ -108,7 +108,7 @@
           <h2>Nguồn tương tác</h2>
           <div class="seg" id="srcSeg">
             <button data-src="camera">Camera + MediaPipe</button>
-            <button data-src="kinect">Kinect v2 (IR)</button>
+            <button data-src="kinect">Kinect v2 (màu / IR)</button>
             <button data-src="mouse">Chuột</button>
           </div>
           <div class="row" style="margin-top:12px">
@@ -171,11 +171,28 @@
           </div>
           <div id="kinectBox" style="display:none">
             <div class="row">
+              <label class="lbl">Ảnh Kinect</label>
+              <div class="seg" id="kSrcSeg" style="flex:1">
+                <button data-ksrc="color">Màu (như webcam)</button>
+                <button data-ksrc="ir">Hồng ngoại</button>
+              </div>
+            </div>
+            <div class="row">
               <label class="lbl">Cổng bridge</label>
               <input type="number" id="kinectPort" min="1024" max="65535" />
               <div class="status"><div class="dot warn" id="kinectDot"></div><div id="kinectText">—</div></div>
             </div>
-            <div class="note">Chạy <span class="mono">KinectBridge.exe</span> trên máy Windows (xem kinect-bridge/README).</div>
+            <div class="note">
+              <b>Màu</b> = dùng Kinect đúng như một webcam thường (1920×1080 giảm mẫu còn 640×360).
+              MediaPipe được huấn luyện trên ảnh màu nên đây là đường chính xác nhất — để mặc định.
+              <b>Hồng ngoại</b> chỉ khi phòng tối tới mức camera màu mù: Kinect tự rọi IR nên vẫn
+              thấy tay, đổi lại nhận cử chỉ kém chính xác hơn.
+            </div>
+            <div class="note">
+              Kinect v2 không có driver UVC nên nó <b>không bao giờ</b> hiện ở ô "Thiết bị" phía trên —
+              hình phải đi qua <span class="mono">KinectBridge.exe</span> chạy trên máy Windows cắm cảm biến
+              (xem kinect-bridge/README). Đổi Màu/IR ở đây là bridge đổi theo ngay, không cần khởi động lại nó.
+            </div>
           </div>
         </div>
       </div>

@@ -95,6 +95,15 @@ export interface AppState {
     pinchThreshold: number
     /** Cổng WebSocket cho Kinect bridge. */
     kinectPort: number
+    /** Kinect gửi ảnh MÀU hay ảnh HỒNG NGOẠI.
+     *  'color' — Kinect dùng đúng như một webcam thường (1920×1080 giảm mẫu còn
+     *            640×360). MediaPipe được huấn luyện trên ảnh màu nên đây là
+     *            đường chính xác nhất, và là mặc định.
+     *  'ir'    — 512×424 hồng ngoại. Kinect tự rọi IR nên thấy tay cả khi phòng
+     *            tối om, đổi lại độ chính xác giảm vì mô hình không được huấn
+     *            luyện trên ảnh xám IR.
+     *  App gửi lựa chọn này xuống bridge qua chính WebSocket đang nối. */
+    kinectSource: 'color' | 'ir'
   }
 
   floor: {

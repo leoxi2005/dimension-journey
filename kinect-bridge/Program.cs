@@ -6,7 +6,9 @@
 // Nhét SDK đó vào Electron bằng native addon là đường dài và dễ vỡ; tách ra một
 // tiến trình nhỏ thì đơn giản, và bridge chết vẫn khởi động lại được giữa show.
 //
-// HAI NGUỒN HÌNH, chọn bằng --source:
+// HAI NGUỒN HÌNH — chọn bằng --source lúc khởi động, HOẶC bấm thẳng trên bảng
+// điều khiển của app lúc đang chạy (app gửi {"cmd":"source"} xuống chính kết nối
+// WebSocket này, xem ListenCommands):
 //   color (mặc định) — camera màu 1920×1080, giảm mẫu còn 640×360.
 //                      Dùng khi phòng còn đủ sáng. MediaPipe được huấn luyện
 //                      trên ảnh màu nên đây là đường chính xác nhất.
@@ -85,9 +87,7 @@ namespace KinectBridge
             _sensor.IsAvailableChanged += (s2, e2) =>
                 Console.WriteLine(e2.IsAvailable ? "Kinect: SAN SANG" : "Kinect: MAT KET NOI (kiem tra cong USB 3.0 / nguon dien)");
             _sensor.Open();
-            var types = (wantIr ? FrameSourceTypes.Infrared : FrameSourceTypes.Color) | FrameSourceTypes.Body;
-            _reader = _sensor.OpenMultiSourceFrameReader(types);
-            _reader.MultiSourceFrameArrived += OnFrame;
+            OpenReader(wantIr);
             Console.WriteLine("Kinect da mo (nguon = " + (wantIr ? "IR" : "COLOR") + "). Dang ket noi " + _url + " …");
             Console.WriteLine("Neu khong thay dong 'Kinect: SAN SANG' trong 10s: chua cai Kinect Runtime 2.0,");
             Console.WriteLine("hoac cam vao cong USB 2.0 (Kinect v2 BAT BUOC USB 3.0 rieng).");
@@ -112,6 +112,9 @@ namespace KinectBridge
                         _ws = new ClientWebSocket();
                         await _ws.ConnectAsync(new Uri(_url), CancellationToken.None);
                         Console.WriteLine("Da noi app.");
+                        // Chay nen: app se gui ngay lenh dong bo nguon hinh sau khi nhan ket noi.
+                        var sock = _ws;
+                        _ = Task.Run(() => ListenCommands(sock));
                     }
                     catch (Exception e)
                     {
@@ -120,6 +123,53 @@ namespace KinectBridge
                     }
                 }
                 await Task.Delay(500);
+            }
+        }
+
+        /// <summary>Mo reader theo nguon hinh. Goi lai duoc luc dang chay de doi
+        /// mau/IR ma khong phai khoi dong lai bridge giua show.</summary>
+        private static void OpenReader(bool wantIr)
+        {
+            if (_reader != null)
+            {
+                _reader.MultiSourceFrameArrived -= OnFrame;
+                _reader.Dispose();
+                _reader = null;
+            }
+            _source = wantIr ? "ir" : "color";
+            // KHONG gan cac dem ve null o day. Doi nguon la doi kich thuoc anh,
+            // nhung SendColor/SendInfrared da tu cap phat lai khi Length khong
+            // khop. Gan null trong khi mot frame cu con dang chay vong copy la
+            // NullReferenceException nem ra tu event handler -> chet ca bridge
+            // giua show, chi de tiet kiem mot lan cap phat.
+            var types = (wantIr ? FrameSourceTypes.Infrared : FrameSourceTypes.Color) | FrameSourceTypes.Body;
+            _reader = _sensor.OpenMultiSourceFrameReader(types);
+            _reader.MultiSourceFrameArrived += OnFrame;
+        }
+
+        /// <summary>Nghe lenh tu app tren chinh ket noi dang co. App gui
+        /// {"cmd":"source","value":"color"|"ir"} moi khi operator bam nut tren
+        /// bang dieu khien. Khong co vong doc nay thi nut do khong lam gi ca.</summary>
+        private static async Task ListenCommands(ClientWebSocket ws)
+        {
+            var buf = new byte[512];
+            try
+            {
+                while (ws.State == WebSocketState.Open)
+                {
+                    var r = await ws.ReceiveAsync(new ArraySegment<byte>(buf), CancellationToken.None);
+                    if (r.MessageType == WebSocketMessageType.Close) return;
+                    var msg = Encoding.UTF8.GetString(buf, 0, r.Count);
+                    if (msg.IndexOf("\"cmd\":\"source\"", StringComparison.Ordinal) < 0) continue;
+                    bool wantIr = msg.IndexOf("\"ir\"", StringComparison.Ordinal) >= 0;
+                    if ((wantIr ? "ir" : "color") == _source) continue;
+                    Console.WriteLine("App yeu cau doi nguon hinh -> " + (wantIr ? "IR" : "COLOR"));
+                    OpenReader(wantIr);
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Vong doc lenh dung: " + e.Message);
             }
         }
 

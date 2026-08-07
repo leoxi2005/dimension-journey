@@ -53,10 +53,33 @@ export class KinectBridge {
     }
   }
 
+  /** Nguồn hình muốn bridge gửi: 'color' (Kinect như webcam thường) hoặc 'ir'. */
+  private wantSource: 'color' | 'ir' = 'color'
+
+  /** Bảo bridge đổi nguồn hình. Bridge đời cũ không hiểu lệnh này thì bỏ qua im
+   *  lặng — nên vẫn phải ghi log, không thì operator đứng bấm mà không biết là
+   *  bridge cũ. */
+  private pushSource(): void {
+    if (!this.client) return
+    try {
+      this.client.send(JSON.stringify({ cmd: 'source', value: this.wantSource }))
+      log('kinect', `đã bảo bridge chuyển sang ảnh ${this.wantSource === 'ir' ? 'HỒNG NGOẠI' : 'MÀU'}`)
+    } catch (e) {
+      log('kinect', `không gửi được lệnh đổi nguồn: ${(e as Error).message}`)
+    }
+  }
+
   /** Bật/tắt theo nguồn input đang chọn. Đổi cổng thì mở lại. */
-  sync(enabled: boolean, port: number): void {
+  sync(enabled: boolean, port: number, source: 'color' | 'ir' = 'color'): void {
     if (!WebSocketServer) return
-    if (enabled && this.wss && this.port === port) return
+    const sourceChanged = source !== this.wantSource
+    this.wantSource = source
+    if (enabled && this.wss && this.port === port) {
+      // Đổi nguồn hình KHÔNG được đóng server: bridge đang nối sẽ rớt và phải
+      // chờ nó tự nối lại, tức là mất hình vài giây ngay giữa show.
+      if (sourceChanged) this.pushSource()
+      return
+    }
     if (this.wss) this.stop()
     if (!enabled) return
 
@@ -70,6 +93,9 @@ export class KinectBridge {
         if (this.client) { try { this.client.close() } catch { /* đã đóng */ } }
         this.client = sock
         log('kinect', 'bridge đã kết nối')
+        // Bridge vừa nối lại có thể đang chạy nguồn hình khác với thứ đang chọn
+        // trên bảng điều khiển (nó nhớ theo cờ dòng lệnh). Đồng bộ ngay.
+        this.pushSource()
         sock.on('message', (raw: Buffer, isBinary: boolean) => this.onMessage(raw, isBinary))
         sock.on('close', () => {
           if (this.client === sock) this.client = null

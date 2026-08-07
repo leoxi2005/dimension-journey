@@ -63,6 +63,9 @@ function render(): void {
     b.classList.toggle('on', b.dataset.src === state.input.source)
   })
   $('kinectBox').style.display = state.input.source === 'kinect' ? 'block' : 'none'
+  document.querySelectorAll<HTMLButtonElement>('#kSrcSeg button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.ksrc === state.input.kinectSource)
+  })
   ;($('kinectPort') as HTMLInputElement).value = String(state.input.kinectPort)
 
   const setRange = (id: string, v: number, text: string): void => {
@@ -197,6 +200,13 @@ function wire(): void {
     void tracker?.openCamera(id).then(() => listCameras())
   }
   $('btnRecam').onclick = (): void => void listCameras()
+
+  document.querySelectorAll<HTMLButtonElement>('#kSrcSeg button').forEach((b) => {
+    b.onclick = (): void => {
+      const v = b.dataset.ksrc as 'color' | 'ir'
+      window.dj.send({ type: 'setInput', patch: { kinectSource: v } })
+    }
+  })
   $('btnCalib').onclick = (): void => {
     const b = $('btnCalib')
     b.textContent = 'chụm tay và giữ…'

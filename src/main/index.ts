@@ -64,7 +64,7 @@ function applyServices(): void {
   wm.syncOutputs(state.outputs)
   spout.sync(state.spout.running, state.spout.fps, state.spout.scale, streamedOutputs())
   ndi.sync(state.ndi.running, state.ndi.fps, state.ndi.scale, streamedOutputs())
-  kinect.sync(state.input.source === 'kinect', state.input.kinectPort)
+  kinect.sync(state.input.source === 'kinect', state.input.kinectPort, state.input.kinectSource)
 }
 
 function dispatch(a: Action): void {
@@ -152,13 +152,32 @@ function wireIpc(): void {
 // ---------------------------------------------------------------- lifecycle
 if (!app.requestSingleInstanceLock()) {
   // Bản cũ còn sống sẽ nuốt lần chạy mới và log vẫn ra từ bản CŨ — rất dễ tưởng
-  // là code không đổi. Thoát dứt khoát cho rõ ràng.
+  // là code không đổi. Thoát dứt khoát, nhưng ghi lại một dòng: không có nó thì
+  // lần chạy mới "không hiện gì" mà chẳng để lại dấu vết nào để lần ra.
+  log('app', 'đã có một bản đang chạy — nhường cho bản cũ (nó sẽ hiện cửa sổ Control lên) và thoát')
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  // Bảng Control là cách DUY NHẤT điều khiển show. Đóng nhầm nó thì app vẫn phải
+  // sống — cửa sổ offscreen của NDI vẫn đang phát, cắt hình giữa show là hỏng —
+  // nhưng bắt buộc phải có đường lấy lại.
+  //
+  // Đây chính là lỗi "tắt app rồi mở lại không được": đóng cửa sổ Control xong,
+  // app KHÔNG thoát (cửa sổ offscreen của NDI vẫn tính là cửa sổ, nên
+  // window-all-closed không bao giờ bắn). Lần chạy sau bị khoá một-bản-duy-nhất
+  // nuốt mất, mà bản cũ thì không còn cửa sổ nào để hiện ra — app thành bóng ma:
+  // vẫn phát NDI, vẫn giữ camera, mà không thấy đâu để bấm.
+  const showControl = (): void => {
     const c = wm.getControl()
-    if (c) { if (c.isMinimized()) c.restore(); c.focus() }
-  })
+    if (c) {
+      if (c.isMinimized()) c.restore()
+      c.focus()
+      return
+    }
+    log('app', 'cửa sổ Control đã bị đóng — mở lại (app vẫn đang chạy nền)')
+    wm.createControl()
+  }
+
+  app.on('second-instance', () => showControl())
 
   app.whenReady().then(() => {
     logEnvironment()
@@ -201,9 +220,10 @@ if (!app.requestSingleInstanceLock()) {
       }
     }, 1000)
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) wm.createControl()
-    })
+    // Bấm icon ở Dock. KHÔNG đếm getAllWindows() như trước: cửa sổ offscreen của
+    // NDI/Spout cũng là BrowserWindow, nên số đó gần như không bao giờ về 0 và
+    // Control sẽ không bao giờ được mở lại.
+    app.on('activate', () => showControl())
   })
 
   app.on('window-all-closed', () => {

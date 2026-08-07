@@ -31,7 +31,10 @@ export function initialState(): AppState {
     ndi: { running: true, fps: 30, scale: 100 },
     input: {
       source: 'camera', deviceId: '', reach: 45, smooth: 0.3,
-      mirror: true, fistHold: 0.5, pinchThreshold: 0.55, kinectPort: 9010
+      mirror: true, fistHold: 0.5, pinchThreshold: 0.55, kinectPort: 9010,
+      // MÀU là mặc định: đó chính là 'dùng Kinect như một camera thường', và
+      // MediaPipe chính xác nhất trên ảnh màu. IR chỉ để dành cho phòng tối om.
+      kinectSource: 'color'
     },
     floor: { rotation: 0, brightness: 85 },
     look: {

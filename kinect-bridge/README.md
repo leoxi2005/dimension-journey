@@ -8,6 +8,12 @@ Kinect v2 **không có driver UVC**. Không một `getUserMedia` nào thấy nó
 trong app sẽ không bao giờ liệt kê nó. Dù bạn chỉ muốn dùng nó như một webcam thường
 thì vẫn **bắt buộc** đi qua Kinect SDK 2.0 (COM/.NET, chỉ Windows).
 
+**Dùng Kinect như một camera thường = chế độ `color`, và đó là mặc định.** Bridge lấy
+ảnh màu 1920×1080 rồi giảm mẫu còn 640×360 đưa cho MediaPipe — không khác gì một webcam,
+chỉ là đường đi vòng qua bridge. Chuyển màu ↔ hồng ngoại bấm thẳng trên bảng điều khiển
+của app (mục **Nguồn tương tác → Ảnh Kinect**), bridge đổi theo ngay, không phải khởi
+động lại nó.
+
 Nhét SDK đó thẳng vào Electron bằng native addon là đường dài và dễ vỡ, nên tách hẳn
 ra một tiến trình: bridge chết thì app vẫn sống, và bạn khởi động lại bridge mà không
 phải tắt show.

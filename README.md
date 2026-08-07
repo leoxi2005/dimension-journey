@@ -62,7 +62,7 @@ tiếng ở đó thì sẽ có 2–3 bản MediaPipe ăn CPU và mỗi nốt nh�
 | Nguồn | Khi nào dùng |
 |---|---|
 | **Camera + MediaPipe** (mặc định) | Người đứng cách 1–2 m và phòng còn đủ sáng. Chính xác nhất — 21 điểm bàn tay, tách được "chụm ngón" với "nắm đấm". |
-| **Kinect v2** | Kinect v2 **không có driver UVC** — không `getUserMedia` nào thấy nó, nên dù chỉ dùng như webcam thường vẫn phải chạy `KinectBridge.exe`. Bridge gửi được **ảnh màu** (phòng đủ sáng, chính xác nhất) hoặc **ảnh hồng ngoại** (phòng tối om). Xem [kinect-bridge/README.md](kinect-bridge/README.md). |
+| **Kinect v2** | Kinect v2 **không có driver UVC** — không `getUserMedia` nào thấy nó, nên nó KHÔNG bao giờ hiện ở ô "Thiết bị"; dù chỉ dùng như webcam thường vẫn phải chạy `KinectBridge.exe`. Chọn **Ảnh Kinect: Màu** (mặc định) là dùng nó đúng như một webcam — 1920×1080 giảm mẫu còn 640×360, chính xác nhất vì MediaPipe được huấn luyện trên ảnh màu. **Hồng ngoại** chỉ khi phòng tối tới mức camera màu mù. Đổi qua lại ngay trên bảng điều khiển, bridge nghe lệnh qua chính WebSocket đang nối. Xem [kinect-bridge/README.md](kinect-bridge/README.md). |
 | **Chuột** | Test, và là đường cứu hộ nếu camera chết giữa show. |
 
 Dù chọn nguồn nào thì bộ nhận cử chỉ vẫn luôn là **MediaPipe**, không phải body
