@@ -29,6 +29,20 @@ function applyHud(s: AppState): void {
   const k = s.look.hudScale
   hud.style.transform = `scale(${k})`
   layersEl.style.transform = `scale(${k})`
+  // Chữ HUD phải nằm trong CÙNG vùng nội dung với nét vẽ, không neo cứng vào mép
+  // tường. Tường dài 10350px ≈ 10m mà nét vẽ chỉ chiếm 45% ở giữa: chữ neo mép
+  // trái là nó rơi ra tận tường bên, cách chỗ đang diễn ra mọi thứ 4–5 mét, người
+  // xem không thể nhìn cùng lúc cả hai. Đây đúng là thứ nhìn thấy trong khung NDI
+  // 10350×1080 chụp ra: chấm sáng ở giữa, chữ ở tít mép trái.
+  const zone = Math.max(20, Math.min(100, s.input.reach))
+  const inset = `${(100 - zone) / 2}%`
+  hud.style.left = inset
+  layersEl.style.right = inset
+  // Chặn chữ tràn tới giữa vùng nội dung — chỗ đó là của TÁC PHẨM. Không có chốt
+  // này thì kéo "cỡ chữ HUD" lên 4× là dòng phụ đề chạy thẳng qua chấm sáng ở
+  // giữa tường. Nhân với hudScale nên phải chia lại cho k mới ra max-width CSS.
+  const bandCss = (window.innerWidth * zone) / 100
+  hud.style.maxWidth = `${Math.max(300, (bandCss * 0.34) / k)}px`
   const st = STAGES[s.stage]
   els.key.textContent = st.key
   els.title.textContent = st.title
