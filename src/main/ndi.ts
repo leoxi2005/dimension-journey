@@ -50,6 +50,8 @@ interface Stream {
   note: string
   starting: boolean
   slowMark: number // lần cuối kêu tụt fps — để không spam log
+  blackMark: number // lần cuối lấy mẫu kiểm frame đen
+  blackRuns: number // số lần lấy mẫu liên tiếp thấy đen
 }
 
 export class NdiService {
@@ -135,7 +137,7 @@ export class NdiService {
     const st: Stream = {
       win, sender: null, name, resW, resH, reqFps: fps, sent: 0, fps: 0,
       fpsMark: Date.now(), fpsCount: 0, copyMs: 0, inflight: false, note: '', starting: true,
-      slowMark: 0
+      slowMark: 0, blackMark: 0, blackRuns: 0
     }
     this.streams[role] = st
 
@@ -165,6 +167,7 @@ export class NdiService {
       // trả về, còn bitmap của Electron chỉ sống trong lời gọi này.
       const data = Buffer.from(image.getBitmap())
       st.copyMs = Date.now() - t0
+      this.checkNotBlack(st, data, role)
       st.inflight = true
       Promise.resolve(
         // Bỏ hẳn timecode: để NDI tự sinh. Đưa số cố định vào là mọi frame trùng
@@ -226,6 +229,36 @@ export class NdiService {
 
     loadOutputRenderer(win, role)
     log('ndi', `start "${name}" (${role}) @ ${resW}x${resH}, dpr=${dpr}`)
+  }
+
+  /** Frame ĐEN THUI là kiểu hỏng nguy hiểm nhất của đường NDI: mọi con số đều
+   *  đẹp — sender chạy, fps đủ, Resolume thấy nguồn — mà tường thì tối om. Nó xảy
+   *  ra khi cửa sổ offscreen không render nổi WebGL (driver GPU trên máy venue,
+   *  hoặc OSR rơi về raster phần mềm). Không có cách nào biết từ xa, nên phải tự
+   *  đo: 5 giây một lần lấy mẫu thưa vài trăm pixel; đen liên tiếp 15 giây mới kêu
+   *  (scene 0D thật sự rất tối, kêu sớm là kêu oan). */
+  private checkNotBlack(st: Stream, data: Buffer, role: OutputKey): void {
+    const now = Date.now()
+    if (now - st.blackMark < 5000) return
+    st.blackMark = now
+    // Bước nhảy PHẢI là bội của 4 và chỉ đọc B,G,R — bỏ kênh alpha. Alpha luôn
+    // bằng 255 nên lấy nhầm nó vào là frame đen thui cũng ra "có hình", tức là
+    // bộ dò này sẽ không bao giờ kêu.
+    const step = Math.max(4, Math.floor(data.length / 400 / 4) * 4)
+    let max = 0
+    for (let i = 0; i + 2 < data.length && max === 0; i += step) {
+      max = Math.max(data[i], data[i + 1], data[i + 2])
+    }
+    if (max === 0) {
+      st.blackRuns++
+      if (st.blackRuns === 3 || st.blackRuns % 12 === 0) {
+        log('ndi', `${role}: KHUNG HÌNH TOÀN ĐEN suốt ${st.blackRuns * 5}s dù vẫn gửi đủ frame` +
+          ' — cửa sổ offscreen không render được WebGL. Xem dòng [gpu] ở đầu log.')
+      }
+    } else {
+      if (st.blackRuns >= 3) log('ndi', `${role}: đã có hình trở lại`)
+      st.blackRuns = 0
+    }
   }
 
   private stop(role: OutputKey): void {
