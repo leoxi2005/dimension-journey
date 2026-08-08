@@ -38,8 +38,16 @@ export function initialState(): AppState {
     },
     floor: { rotation: 0, brightness: 85 },
     look: {
-      hFov: 100, hud: true, hudScale: 1.8, bloom: true, bloomStrength: 0.85,
-      starDensity: 100, strokeScale: 1.8
+      // hudScale 1.0: ở 1.8× thì chữ "0D" cao 130px trên tường chỉ 1080px — chiếm
+      // 12% chiều cao và át cả nét vẽ. 1.0× là 72px, vẫn đọc được từ xa vì tường
+      // cao 1080 nhưng chỉ ngồi ở mép, không tranh chỗ với tác phẩm.
+      hFov: 100, hud: true, hudScale: 1.0, bloom: true, bloomStrength: 0.85,
+      starDensity: 100, strokeScale: 1.8,
+      // Tiếng vọng phủ HẾT bề ngang (cả 5 tường). Tay vẫn chỉ điều khiển vùng
+      // giữa theo `input.reach` — giữ nguyên độ chính xác khi vẽ — còn hình thì
+      // vang ra tới hai tường rìa. 6 tiếng vọng/nét là mức lấp đầy 10m mà chưa
+      // thành nhiễu; kéo về 0 là trở lại đúng hành vi cũ.
+      spread: 100, spreadCount: 6
     }
   }
 }

@@ -7,6 +7,7 @@
 import { WallScene } from './scene'
 import { AppState, HandsFrame } from '../../shared/types'
 import { STAGES } from '../shared/stages'
+import { wallSpan } from '../shared/walls'
 
 const canvas = document.getElementById('gl') as HTMLCanvasElement
 const hud = document.getElementById('hud') as HTMLDivElement
@@ -29,20 +30,27 @@ function applyHud(s: AppState): void {
   const k = s.look.hudScale
   hud.style.transform = `scale(${k})`
   layersEl.style.transform = `scale(${k})`
-  // Chữ HUD phải nằm trong CÙNG vùng nội dung với nét vẽ, không neo cứng vào mép
-  // tường. Tường dài 10350px ≈ 10m mà nét vẽ chỉ chiếm 45% ở giữa: chữ neo mép
-  // trái là nó rơi ra tận tường bên, cách chỗ đang diễn ra mọi thứ 4–5 mét, người
-  // xem không thể nhìn cùng lúc cả hai. Đây đúng là thứ nhìn thấy trong khung NDI
-  // 10350×1080 chụp ra: chấm sáng ở giữa, chữ ở tít mép trái.
+  // Chữ HUD nằm GỌN TRONG TƯỜNG 3, không vắt qua mối nối giữa hai tường. Khung
+  // 10350×1080 không phải một mặt phẳng liền: nó là 5 mặt tường của phòng pentagon
+  // ghép lại, mỗi mặt một máy chiếu warp riêng bên Resolume. Chữ nằm vắt qua mối
+  // nối là gãy làm đôi ở góc phòng — không đọc được từ bất kỳ chỗ đứng nào.
+  // Bản trước neo theo (100-reach)/2 = 27.5% = px 2846, tức bắt đầu từ TƯỜNG 2
+  // rồi mới tràn sang tường 3. Giờ neo cứng vào mép trái tường 3.
+  const w3 = wallSpan(2)
+  hud.style.left = `${w3.x0 * 100}%`
+  // Ô đếm layer 5D vẫn theo vùng nội dung như cũ — nó nằm mép phải, không tranh
+  // chỗ với HUD, và người vận hành quen nhìn nó ở đó.
   const zone = Math.max(20, Math.min(100, s.input.reach))
-  const inset = `${(100 - zone) / 2}%`
-  hud.style.left = inset
-  layersEl.style.right = inset
-  // Chặn chữ tràn tới giữa vùng nội dung — chỗ đó là của TÁC PHẨM. Không có chốt
-  // này thì kéo "cỡ chữ HUD" lên 4× là dòng phụ đề chạy thẳng qua chấm sáng ở
-  // giữa tường. Nhân với hudScale nên phải chia lại cho k mới ra max-width CSS.
-  const bandCss = (window.innerWidth * zone) / 100
-  hud.style.maxWidth = `${Math.max(300, (bandCss * 0.34) / k)}px`
+  layersEl.style.right = `${(100 - zone) / 2}%`
+  // Chặn bề ngang để chữ KHÔNG tràn khỏi tường 3 kể cả khi kéo "cỡ chữ HUD" lên
+  // 4×. Trừ hai lần PAD: #hud có padding-left 56px, chừa nốt 56px bên phải cho
+  // cân. Cả padding lẫn max-width đều bị scale(k) nhân lên, nên phải chia lại cho
+  // k mới ra số CSS đúng. Chốt thêm ở MEASURE để dòng phụ đề 17px không kéo dài
+  // thành một hàng 1800px không ai đọc nổi.
+  const PAD = 56
+  const MEASURE = 620
+  const w3Css = window.innerWidth * w3.w
+  hud.style.maxWidth = `${Math.max(200, Math.min(MEASURE, w3Css / k - PAD * 2))}px`
   const st = STAGES[s.stage]
   els.key.textContent = st.key
   els.title.textContent = st.title
