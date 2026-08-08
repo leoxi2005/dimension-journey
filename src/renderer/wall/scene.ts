@@ -28,12 +28,17 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { AppState, HandsFrame, HandFrame, EMPTY_HAND, EMPTY_SECOND, SecondHand, Stage } from '../../shared/types'
+import { WALL_COUNT, wallAt, wallSpan } from '../shared/walls'
 
 const HALF_H = 6.5 // nửa chiều cao thế giới — HẰNG SỐ, giữ mọi tỉ lệ pixel như bản gốc
 const REF_DIST = 14 // khoảng cách camera của bản gốc, dùng làm mốc quy đổi cỡ hạt
 const MAX_TEX = 16384
 const MAX_STROKE_PTS = 900 // sức chứa buffer nét đang vẽ
 const MAX_TRAIL = 2400     // sức chứa buffer vệt sáng
+// Trần tiếng vọng. Nét vẽ chỉ được dọn khi đổi tầng hoặc bấm xoá, nên một tầng
+// bỏ ngỏ 20 phút ở venue sẽ chồng vô hạn mesh — mỗi tiếng vọng là một tube thật,
+// và bề mặt render là 11.2 Mpx. Chạm trần thì thu hồi cái GIÀ NHẤT.
+const MAX_ECHOES = 90
 
 interface Framing {
   dist: number
@@ -92,7 +97,15 @@ export class WallScene {
   private trailPoints!: THREE.Points
 
   private trail: { x: number; y: number; z: number; t: number }[] = []
-  private echoes: { mesh: THREE.Object3D; born: number; target: number }[] = []
+  private echoes: {
+    mesh: THREE.Object3D
+    born: number
+    target: number
+    /** Có thì tiếng vọng BAY từ `from` sang `to` trong `dur` giây (lan ra). */
+    from?: THREE.Vector3
+    to?: THREE.Vector3
+    dur?: number
+  }[] = []
   private twinkles: { mat: THREE.Material & { opacity: number }; phase: number }[] = []
   private pulses: { mat: THREE.MeshPhysicalMaterial; phase: number }[] = []
 
@@ -107,6 +120,12 @@ export class WallScene {
   private stackPitch = 0
   private palmPrev: { x: number; y: number } | null = null
   private prevPinch = false
+  /** Con trỏ xoay vòng qua các mặt tường. KHÔNG reset mỗi nét: có vậy nét thứ hai
+   *  mới lấp vào mặt tường mà nét thứ nhất chưa với tới, thay vì cả hai cùng dồn
+   *  vào mấy mặt đầu danh sách. */
+  private spreadCursor = 0
+  private spreadHits = new Array(WALL_COUNT).fill(0) as number[]
+  private spreadStrokes = 0
 
   /** Control hiển thị số layer 5D và phát tiếng; scene báo ngược ra đây. */
   onLayerCount: ((n: number) => void) | null = null
@@ -536,6 +555,132 @@ export class WallScene {
     if (this.trail.length > MAX_TRAIL) this.trail.splice(0, this.trail.length - MAX_TRAIL)
   }
 
+  /** TIẾNG VỌNG LAN RA — cách phần tương tác phủ hết 5 tường mà tay không phải
+   *  quét 10m.
+   *
+   *  Tay chỉ điều khiển vùng giữa (`input.reach`, mặc định 45%) vì bàn tay không
+   *  quét nổi bề ngang thật, và ép nó quét thì rung tay bị nhân lên gấp đôi rồi
+   *  giật ở hai đầu. Nên nét GỐC vẫn nằm giữa như cũ, còn mỗi nét vẽ xong sẽ đẻ
+   *  ra các bản sao BAY từ chỗ vừa vẽ toả ra hai bên — đó mới là thứ lấp đầy
+   *  tường 4 và 5.
+   *
+   *  Rải theo TỪNG MẶT TƯỜNG chứ không random trên bề ngang: random thì mặt rộng
+   *  620cm hứng gấp 3.4 lần mặt rộng 180cm, và mặt hẹp nhất có lúc trống trơn —
+   *  đúng thứ phải tránh khi mục tiêu là "phủ cả 5 tường".
+   *
+   *  @param make Dựng một BẢN MỚI của nét (không dùng .clone() vì nét đặc là
+   *              group nhiều material, clone dùng chung material thì chỉnh mờ
+   *              một bản là mờ luôn bản gốc).
+   *  @param origin Chỗ nét vừa được vẽ — điểm xuất phát của cú lan.
+   */
+  private spreadEchoes(make: () => THREE.Object3D | null, origin: THREE.Vector3, mult = 1): void {
+    const spread = Math.max(0, Math.min(100, this.state.look.spread)) / 100
+    const count = Math.max(0, Math.min(12, Math.round(this.state.look.spreadCount * mult)))
+    if (spread <= 0 || count === 0) return
+
+    const now = performance.now() / 1000
+    // Mặt tường đang chứa nét gốc — bỏ qua nó, chỗ đó đã có bản thật rồi. Phải
+    // tra bằng wallAt() chứ không chia đều 5 phần: các mặt rộng 180..620cm, chia
+    // đều là quy sai mặt gần một nửa số lần.
+    const originFrac = Math.max(0, Math.min(1, 0.5 + origin.x / (2 * this.f.halfW)))
+    const skip = wallAt(originFrac)
+    // Danh sách mặt tường CẦN lấp, không kể mặt đang có nét gốc. Đi vòng qua
+    // danh sách này nên dù count nhỏ hơn 5 thì các nét sau vẫn lấp nốt chỗ trống.
+    const targets: number[] = []
+    for (let w = 0; w < WALL_COUNT; w++) if (w !== skip) targets.push(w)
+
+    for (let i = 0; i < count; i++) {
+      // CHỈ dùng spreadCursor, KHÔNG cộng thêm i: cursor đã tăng mỗi vòng rồi,
+      // cộng cả hai là chỉ số nhảy 2 bước, mà danh sách đích có 4 mặt nên hai
+      // mặt lẻ không bao giờ tới lượt. Log ở venue in ra 30/0/9/21/0 đúng vì lỗi
+      // này. Và cursor phải tăng NGAY, kể cả khi dựng nét hỏng — để trong nhánh
+      // thành công thì một nét quá ngắn sẽ ghim cả loạt tiếng vọng vào một mặt.
+      const wall = targets[this.spreadCursor % targets.length]
+      this.spreadCursor++
+      const span = wallSpan(wall)
+
+      const mesh = make()
+      if (!mesh) continue
+
+      // Tâm mặt tường + xê dịch trong lòng nó, đổi từ tỉ lệ 0..1 sang toạ độ thế
+      // giới (-halfW..+halfW). spread < 100% kéo tất cả về gần giữa lại.
+      const frac = span.mid + (Math.random() - 0.5) * span.w * 0.7
+      const tx = (frac * 2 - 1) * this.f.halfW * spread
+      const to = new THREE.Vector3(
+        tx,
+        origin.y + (Math.random() - 0.5) * HALF_H * 0.9,
+        -this.f.dist * (0.04 + Math.random() * 0.42)
+      )
+
+      // Càng xa nét gốc càng mờ và càng nhỏ: khán giả phải đọc được ngay đâu là
+      // nét mình vừa vẽ, đâu là tiếng vọng của nó.
+      const far = Math.min(1, Math.abs(to.x - origin.x) / Math.max(1e-3, this.f.halfW))
+      this.dim(mesh, 0.72 - far * 0.34)
+
+      mesh.position.copy(origin)
+      mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28)
+      mesh.scale.setScalar(0.001)
+      this.strokeGroup.add(mesh)
+      this.echoes.push({
+        mesh,
+        born: now + 0.12 + i * 0.14,
+        target: (0.85 - far * 0.35) * (0.7 + Math.random() * 0.6),
+        from: origin.clone(),
+        to,
+        // Đi hết 10m trong ~1.4s: chậm hơn thì người vẽ đã bỏ tay xuống mới thấy,
+        // nhanh hơn thì thành cú nháy chứ không còn đọc ra là "lan".
+        dur: 1.15 + Math.random() * 0.5 + i * 0.08
+      })
+      this.spreadHits[wall]++
+    }
+    this.trimEchoes()
+
+    // Chẩn đoán ở venue: mặt tường nào đang bị bỏ đói. Nhìn tường thật thì rất
+    // khó đếm — đứng giữa phòng pentagon không thấy được cả 5 mặt cùng lúc.
+    // 10 nét mới in một dòng để không làm ngập log lúc đang chạy show.
+    this.spreadStrokes++
+    if (this.spreadStrokes % 10 === 0) {
+      const w = window as unknown as { dj?: { log?: (t: string, m: string) => void } }
+      w.dj?.log?.('spread', `${this.spreadStrokes} nét · tiếng vọng theo tường 1..5: ${this.spreadHits.join('/')} · đang sống ${this.echoes.length}/${MAX_ECHOES}`)
+    }
+  }
+
+  /** Tâm của nét, dùng làm gốc toạ độ cho tiếng vọng. */
+  private centroid(pts: THREE.Vector3[]): THREE.Vector3 {
+    const c = new THREE.Vector3()
+    for (const p of pts) c.add(p)
+    return c.divideScalar(Math.max(1, pts.length))
+  }
+
+  /** Nhân độ mờ của mọi material trong một nét. */
+  private dim(o: THREE.Object3D, k: number): void {
+    o.traverse((c) => {
+      const m = (c as unknown as { material?: THREE.Material | THREE.Material[] }).material
+      if (!m) return
+      for (const one of Array.isArray(m) ? m : [m]) {
+        one.transparent = true
+        one.opacity *= k
+      }
+    })
+  }
+
+  /** Giữ số tiếng vọng dưới trần, thu hồi cái già nhất. */
+  private trimEchoes(): void {
+    while (this.echoes.length > MAX_ECHOES) {
+      const old = this.echoes.shift()
+      if (!old) break
+      this.strokeGroup.remove(old.mesh)
+      old.mesh.traverse((o) => {
+        const any = o as unknown as { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] }
+        any.geometry?.dispose()
+        if (any.material) {
+          if (Array.isArray(any.material)) any.material.forEach((m) => m.dispose())
+          else any.material.dispose()
+        }
+      })
+    }
+  }
+
   private endStroke(): void {
     this.drawing = false
     const pts = this.strokePts
@@ -559,6 +704,25 @@ export class WallScene {
       const grp = new THREE.Group()
       grp.add(mesh, e1, e2)
       this.strokeGroup.add(grp)
+
+      // Tiếng vọng dựng từ điểm ĐÃ DỜI VỀ TÂM NÉT. Hình học của nét gốc nằm ở
+      // toạ độ tuyệt đối; nếu tiếng vọng cũng vậy thì đặt position là cộng dồn
+      // hai lần, và scale từ 0.001 sẽ co về gốc thế giới chứ không nở ra từ tâm
+      // chính nó.
+      const c1 = this.centroid([a, b])
+      const la = a.clone().sub(c1)
+      const lb = b.clone().sub(c1)
+      this.spreadEchoes(() => {
+        const m = new THREE.Mesh(
+          new THREE.TubeGeometry(new THREE.LineCurve3(la, lb), 2, this.sw(0.045), 8, false),
+          new THREE.MeshBasicMaterial({ color: 0xb79bfa, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false })
+        )
+        const s1 = this.makeSprite(0xe9d5ff, this.sw(0.5), 0.9); s1.position.copy(la)
+        const s2 = this.makeSprite(0xe9d5ff, this.sw(0.5), 0.9); s2.position.copy(lb)
+        const g = new THREE.Group()
+        g.add(m, s1, s2)
+        return g
+      }, c1)
       return
     }
 
@@ -568,6 +732,12 @@ export class WallScene {
       const flat = pts.map((p) => new THREE.Vector3(p.x, p.y, 0))
       const mesh = this.tubeFrom(flat, this.sw(0.05), new THREE.MeshBasicMaterial({ color: 0xb79bfa, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false }))
       if (mesh) this.strokeGroup.add(mesh)
+      const c2 = this.centroid(flat)
+      const local2 = flat.map((p) => p.clone().sub(c2))
+      this.spreadEchoes(
+        () => this.tubeFrom(local2, this.sw(0.05), new THREE.MeshBasicMaterial({ color: 0xb79bfa, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false })),
+        c2
+      )
       return
     }
 
@@ -578,27 +748,14 @@ export class WallScene {
       if (!grp) return
       this.strokeGroup.add(grp)
 
-      if (stage === 4) {
-        const now = performance.now() / 1000
-        // Tiếng vọng 4D rải theo BỀ NGANG tường, không quây tròn quanh gốc như
-        // bản gốc — quây tròn thì 10m tường chỉ có cục sáng ở giữa.
-        for (let i = 0; i < 5; i++) {
-          const clone = this.makeSolidStroke(deep)
-          if (!clone) continue
-          clone.position.set(
-            // Tiếng vọng CỐ Ý rải khắp tường, KHÔNG bó theo vùng nội dung: 4D là
-            // "one form, echoing across spacetime" — dồn hết vào giữa thì mất ý.
-            // Nét gốc vẫn nằm giữa (theo tầm với), chỉ tiếng vọng mới toả ra.
-            (Math.random() * 2 - 1) * this.f.halfW * 0.85,
-            (Math.random() - 0.5) * HALF_H * 1.6,
-            -this.f.dist * (0.05 + Math.random() * 0.5)
-          )
-          clone.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28)
-          clone.scale.setScalar(0.001)
-          this.strokeGroup.add(clone)
-          this.echoes.push({ mesh: clone, born: now + 0.25 + i * 0.28, target: 0.35 + Math.random() * 1.0 })
-        }
-      }
+      // 4D là "one form, echoing across spacetime" nên vốn đã có tiếng vọng, chỉ
+      // là bản cũ rải NGẪU NHIÊN trên bề ngang và đứng yên tại chỗ. Giờ dùng
+      // chung một hệ với các tầng khác: rải theo từng mặt tường và BAY ra từ nét
+      // gốc. 4D vẫn dày hơn — gấp rưỡi số tiếng vọng, đó là chất riêng của tầng.
+      const c3 = this.centroid(deep)
+      const local3 = deep.map((p) => p.clone().sub(c3))
+      const extra = stage === 4 ? 1.5 : 1
+      this.spreadEchoes(() => this.makeSolidStroke(local3), c3, extra)
       return
     }
 
@@ -621,6 +778,18 @@ export class WallScene {
       this.stackGroup.add(layer)
       this.layerCount++
       this.onLayerCount?.(this.layerCount)
+
+      // Tiếng vọng 5D đi vào strokeGroup chứ KHÔNG vào stackGroup: chồng layer là
+      // một khối xoay được bằng tay thứ hai, nhét tiếng vọng vào đó thì chúng
+      // quay theo và văng khỏi tường mỗi lần người xem xoay. Để ngoài thì khối
+      // chồng vẫn nằm giữa, tiếng vọng tự do lan sang hai tường rìa.
+      const w5 = pts.map((p) => p.clone())
+      const c5 = this.centroid(w5)
+      const local5 = w5.map((p) => p.clone().sub(c5)).map((p) => new THREE.Vector3(p.x, p.y, 0))
+      this.spreadEchoes(
+        () => this.gradTube(local5, this.sw(0.06), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.96, blending: THREE.AdditiveBlending, depthWrite: false }), hueFn, 0.85, 0.62),
+        c5
+      )
     }
   }
 
@@ -923,6 +1092,13 @@ export class WallScene {
       const ease = 1 - Math.pow(1 - k, 3)
       e.mesh.scale.setScalar(Math.max(0.001, ease * e.target))
       e.mesh.rotation.y += dt * 0.15
+      // Cú LAN: bay từ chỗ vừa vẽ ra mặt tường được giao. easeOutCubic để nó
+      // phóng đi dứt khoát rồi đậu lại nhẹ, chứ không trôi đều như băng chuyền.
+      if (e.from && e.to) {
+        const kp = Math.min(1, Math.max(0, (t - e.born) / Math.max(0.01, e.dur ?? 1.4)))
+        const easeP = 1 - Math.pow(1 - kp, 3)
+        e.mesh.position.copy(e.from).lerp(e.to, easeP)
+      }
     }
 
     if (this.composer) this.composer.render()

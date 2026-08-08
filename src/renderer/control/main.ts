@@ -84,6 +84,8 @@ function render(): void {
   setRange('stars', state.look.starDensity, `${state.look.starDensity}%`)
   setRange('strokeScale', state.look.strokeScale, `${state.look.strokeScale.toFixed(1)}×`)
   setRange('hudScale', state.look.hudScale, `${state.look.hudScale.toFixed(1)}×`)
+  setRange('spread', state.look.spread, state.look.spread === 0 ? 'tắt' : `${state.look.spread}%`)
+  setRange('spreadCount', state.look.spreadCount, `${state.look.spreadCount}`)
   setRange('bloomS', state.look.bloomStrength, state.look.bloomStrength.toFixed(2))
 
   const resW = $('resW') as HTMLInputElement
@@ -227,6 +229,8 @@ function wire(): void {
   range('stars', (v) => window.dj.send({ type: 'setLook', patch: { starDensity: v } }))
   range('strokeScale', (v) => window.dj.send({ type: 'setLook', patch: { strokeScale: v } }))
   range('hudScale', (v) => window.dj.send({ type: 'setLook', patch: { hudScale: v } }))
+  range('spread', (v) => window.dj.send({ type: 'setLook', patch: { spread: v } }))
+  range('spreadCount', (v) => window.dj.send({ type: 'setLook', patch: { spreadCount: v } }))
   range('bloomS', (v) => window.dj.send({ type: 'setLook', patch: { bloomStrength: v } }))
 
   $('kinectPort').onchange = (e): void =>

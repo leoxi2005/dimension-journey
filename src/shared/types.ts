@@ -125,6 +125,13 @@ export interface AppState {
     /** Hệ số dày nét vẽ. Bản gốc tính cho màn 16:9 gần mắt; chiếu lên tường
      *  10m thì nét mảnh như sợi tóc, nên cần nhân lên. */
     strokeScale: number
+    /** Tiếng vọng lan ra bao nhiêu phần bề ngang tường (0..100%).
+     *  KHÁC hẳn `input.reach`: reach là tay VỚI tới đâu, spread là nét đã vẽ
+     *  VANG ra tới đâu. Tách đôi vì tay không quét nổi 10m nhưng hình thì phải
+     *  phủ đủ 5 tường — 0 là tắt hẳn, về đúng hành vi cũ. */
+    spread: number
+    /** Số tiếng vọng sinh ra mỗi nét (0..12). */
+    spreadCount: number
   }
 }
 
