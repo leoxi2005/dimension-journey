@@ -583,9 +583,9 @@ export class WallScene {
    *              một bản là mờ luôn bản gốc).
    *  @param origin Chỗ nét vừa được vẽ — điểm xuất phát của cú lan.
    */
-  private spreadEchoes(make: () => THREE.Object3D | null, origin: THREE.Vector3, mult = 1): void {
+  private spreadEchoes(make: () => THREE.Object3D | null, origin: THREE.Vector3): void {
     const spread = Math.max(0, Math.min(100, this.state.look.spread)) / 100
-    const count = Math.max(0, Math.min(12, Math.round(this.state.look.spreadCount * mult)))
+    const count = Math.max(0, Math.min(12, Math.round(this.state.look.spreadCount)))
     if (spread <= 0 || count === 0) return
 
     const now = performance.now() / 1000
@@ -714,25 +714,6 @@ export class WallScene {
       const grp = new THREE.Group()
       grp.add(mesh, e1, e2)
       this.strokeGroup.add(grp)
-
-      // Tiếng vọng dựng từ điểm ĐÃ DỜI VỀ TÂM NÉT. Hình học của nét gốc nằm ở
-      // toạ độ tuyệt đối; nếu tiếng vọng cũng vậy thì đặt position là cộng dồn
-      // hai lần, và scale từ 0.001 sẽ co về gốc thế giới chứ không nở ra từ tâm
-      // chính nó.
-      const c1 = this.centroid([a, b])
-      const la = a.clone().sub(c1)
-      const lb = b.clone().sub(c1)
-      this.spreadEchoes(() => {
-        const m = new THREE.Mesh(
-          new THREE.TubeGeometry(new THREE.LineCurve3(la, lb), 2, this.sw(0.045), 8, false),
-          new THREE.MeshBasicMaterial({ color: 0xb79bfa, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false })
-        )
-        const s1 = this.makeSprite(0xe9d5ff, this.sw(0.5), 0.9); s1.position.copy(la)
-        const s2 = this.makeSprite(0xe9d5ff, this.sw(0.5), 0.9); s2.position.copy(lb)
-        const g = new THREE.Group()
-        g.add(m, s1, s2)
-        return g
-      }, c1)
       return
     }
 
@@ -742,12 +723,6 @@ export class WallScene {
       const flat = pts.map((p) => new THREE.Vector3(p.x, p.y, 0))
       const mesh = this.tubeFrom(flat, this.sw(0.05), new THREE.MeshBasicMaterial({ color: 0xb79bfa, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false }))
       if (mesh) this.strokeGroup.add(mesh)
-      const c2 = this.centroid(flat)
-      const local2 = flat.map((p) => p.clone().sub(c2))
-      this.spreadEchoes(
-        () => this.tubeFrom(local2, this.sw(0.05), new THREE.MeshBasicMaterial({ color: 0xb79bfa, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.95, depthWrite: false })),
-        c2
-      )
       return
     }
 
@@ -758,14 +733,15 @@ export class WallScene {
       if (!grp) return
       this.strokeGroup.add(grp)
 
-      // 4D là "one form, echoing across spacetime" nên vốn đã có tiếng vọng, chỉ
-      // là bản cũ rải NGẪU NHIÊN trên bề ngang và đứng yên tại chỗ. Giờ dùng
-      // chung một hệ với các tầng khác: rải theo từng mặt tường và BAY ra từ nét
-      // gốc. 4D vẫn dày hơn — gấp rưỡi số tiếng vọng, đó là chất riêng của tầng.
-      const c3 = this.centroid(deep)
-      const local3 = deep.map((p) => p.clone().sub(c3))
-      const extra = stage === 4 ? 1.5 : 1
-      this.spreadEchoes(() => this.makeSolidStroke(local3), c3, extra)
+      // Tiếng vọng CHỈ có ở 4D. Đây là chất riêng của tầng — "one form, echoing
+      // across spacetime" — nên các tầng khác phải sạch: 1D/2D/3D/5D vẽ ra đúng
+      // một nét, không đẻ thêm bản sao nào. Có lúc đã cho cả 5 tầng cùng vang ra
+      // và kết quả là nhìn loạn, mất hẳn ý nghĩa riêng của 4D.
+      if (stage === 4) {
+        const c3 = this.centroid(deep)
+        const local3 = deep.map((p) => p.clone().sub(c3))
+        this.spreadEchoes(() => this.makeSolidStroke(local3), c3)
+      }
       return
     }
 
@@ -788,18 +764,6 @@ export class WallScene {
       this.stackGroup.add(layer)
       this.layerCount++
       this.onLayerCount?.(this.layerCount)
-
-      // Tiếng vọng 5D đi vào strokeGroup chứ KHÔNG vào stackGroup: chồng layer là
-      // một khối xoay được bằng tay thứ hai, nhét tiếng vọng vào đó thì chúng
-      // quay theo và văng khỏi tường mỗi lần người xem xoay. Để ngoài thì khối
-      // chồng vẫn nằm giữa, tiếng vọng tự do lan sang hai tường rìa.
-      const w5 = pts.map((p) => p.clone())
-      const c5 = this.centroid(w5)
-      const local5 = w5.map((p) => p.clone().sub(c5)).map((p) => new THREE.Vector3(p.x, p.y, 0))
-      this.spreadEchoes(
-        () => this.gradTube(local5, this.sw(0.06), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.96, blending: THREE.AdditiveBlending, depthWrite: false }), hueFn, 0.85, 0.62),
-        c5
-      )
     }
   }
 

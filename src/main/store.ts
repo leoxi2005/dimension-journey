@@ -47,11 +47,11 @@ export function initialState(): AppState {
       // cao 1080 nhưng chỉ ngồi ở mép, không tranh chỗ với tác phẩm.
       hFov: 100, hud: true, hudScale: 1.0, bloom: true, bloomStrength: 0.85,
       starDensity: 100, strokeScale: 1.8,
-      // Tiếng vọng phủ HẾT bề ngang. Từ khi reach lên 100 thì chính nét vẽ đã
-      // chạy được sang các tường khác, nên tiếng vọng lùi về vai trò làm dày
-      // thêm chứ không còn là thứ DUY NHẤT lấp hai tường rìa — vì vậy hạ từ 6
-      // xuống 4/nét cho đỡ rối. Kéo về 0 là tắt hẳn.
-      spread: 100, spreadCount: 4
+      // CHỈ ẢNH HƯỞNG TẦNG 4D. Các tầng khác vẽ ra đúng một nét, không đẻ bản
+      // sao — cho cả 5 tầng cùng vang ra thì nhìn loạn và mất luôn ý nghĩa riêng
+      // của 4D ("one form, echoing across spacetime"). 5 tiếng vọng/nét là đúng
+      // mức 4D vẫn chạy từ trước; spread 100% là chúng rải khắp 5 mặt tường.
+      spread: 100, spreadCount: 5
     }
   }
 }

@@ -121,7 +121,7 @@ là scene phải render thêm một lần nữa. Control có cảnh báo sẵn k
 | Núm | Ý nghĩa |
 |---|---|
 | **Tầm với** | Mặc định 100%: quét tay hết khung camera = vẽ hết 10 m, một nét chạy được từ tường 1 sang tường 5. Rung ở hai đầu đã xử bằng cách bỏ 9% mép khung camera, nên đừng hạ thanh này trừ khi người xem đứng quá gần camera. |
-| **Lan toả / Số tiếng vọng** | Nét vẽ xong vang thêm sang các mặt tường bên, rải theo từng mặt chứ không random trên 10350 px. Lan toả = vang xa tới đâu, số tiếng vọng = mỗi nét đẻ mấy bản. Cả hai về 0 là tắt. Log `[spread]` in bảng phủ tường sau mỗi 10 nét. |
+| **Lan toả 4D / Tiếng vọng 4D** | **Chỉ tầng 4D.** Các tầng khác vẽ ra đúng một nét, không đẻ bản sao. Ở 4D mỗi nét vang thêm mấy bản, rải theo TỪNG MẶT TƯỜNG chứ không random trên 10350 px (random thì mặt 620 cm hứng gấp 3.4 lần mặt 180 cm). Cả hai về 0 là 4D cũng sạch. Log `[spread]` in bảng phủ tường sau mỗi 10 nét. |
 | **Ngưỡng chụm** | Chụm khó ăn → tăng. Tự vẽ khi chưa chụm → giảm. |
 | **Giữ nắm đấm** | Số giây giữ nắm đấm để sang chiều kế tiếp. Mặc định 4 s. |
 | **Lật gương** | Vẽ vòng tròn thấy nét chạy ngược chiều tay → bấm nút này. Phụ thuộc chỗ đặt camera. |
