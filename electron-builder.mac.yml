@@ -1,0 +1,38 @@
+# Cấu hình đóng gói riêng cho macOS — KHÔNG gộp vào electron-builder.yml.
+#
+# Lý do phải tách hẳn file: bản Windows khai `extraResources` trỏ tới
+# native/spout/build/Release/djspout.node. Addon đó chỉ biên dịch được trên
+# Windows, nên trên máy Mac electron-builder sẽ chết ngay ở bước copy resource.
+# Nhét cờ điều kiện vào một file chung thì đường build Windows — thứ đang chạy
+# ngon ở CI và là bản dùng cho show thật — sẽ thành thứ dễ vỡ. Tách file thì hai
+# đường độc lập hoàn toàn.
+#
+# Bản Mac dùng để làm gì: xem trước và canh chỉnh ngoài venue. Spout KHÔNG có
+# trên macOS (app tự báo "chỉ chạy trên Windows" rồi đi tiếp), đường ra là NDI —
+# thứ vốn cũng là đường ra chính của show.
+appId: com.leoxi.dimensionjourney
+productName: DIMENSION JOURNEY
+directories:
+  output: dist-mac
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  # Model + wasm MediaPipe: app phải chạy được ở chỗ không có mạng.
+  # KHÔNG có mục djspout.node như bản Windows — xem ghi chú đầu file.
+  - from: resources/mediapipe
+    to: mediapipe
+mac:
+  target:
+    - target: dir
+      arch: [arm64]
+  category: public.app-category.graphics-design
+  # Không ký, không notarize: bản này chỉ chạy trên máy của chính chủ, dựng tại
+  # chỗ nên không dính cờ quarantine của Gatekeeper.
+  identity: null
+  # App xin camera để tracking tay. Thiếu khai báo này thì macOS giết tiến trình
+  # ngay lúc gọi getUserMedia, và triệu chứng nhìn ra y hệt "camera hỏng".
+  extendInfo:
+    NSCameraUsageDescription: DIMENSION JOURNEY dùng camera để nhận diện cử chỉ tay.
+    NSMicrophoneUsageDescription: DIMENSION JOURNEY không thu tiếng, chỉ phát.

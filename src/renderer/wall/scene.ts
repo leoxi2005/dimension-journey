@@ -466,10 +466,20 @@ export class WallScene {
       return
     }
     const reach = this.contentZone()
-    // reach < 100% thu vùng với tới về giữa tường — bàn tay không quét nổi 10m
-    // thì thà cho nó điều khiển đúng phần giữa còn hơn giật cục ở hai đầu.
-    const nx = 0.5 + (h.nx - 0.5) * reach
-    const ny = 0.5 + (h.ny - 0.5) * reach
+    // Quét hết khung camera = vẽ hết bề ngang tường, nên một nét có thể chạy từ
+    // tường 1 sang tường 5. reach < 100% thu vùng với tới về giữa.
+    //
+    // MÉP KHUNG BỎ ĐI: MediaPipe kém tin cậy nhất khi bàn tay chạm rìa khung
+    // hình — mất mấy đốt ngón là toạ độ nhảy. Bản trước né bằng cách hạ reach
+    // xuống 45%, nhưng thế là hy sinh luôn 5.7m tường. Thay bằng: cắt bỏ EDGE ở
+    // mỗi mép rồi kéo phần giữa phủ trọn tường. Người xem với tới tường rìa mà
+    // tay vẫn nằm trong vùng camera nhìn rõ, và không phải rướn ra khỏi khung.
+    const EDGE = 0.09
+    const span = 1 - EDGE * 2
+    const ex = Math.max(0, Math.min(1, (h.nx - EDGE) / span))
+    const ey = Math.max(0, Math.min(1, (h.ny - EDGE) / span))
+    const nx = 0.5 + (ex - 0.5) * reach
+    const ny = 0.5 + (ey - 0.5) * reach
     this.pointerTarget = this.screenToWorld(nx, ny)
     this.cursorActive = true
 

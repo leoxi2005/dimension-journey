@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+dist-mac/
 native/spout/build/
 native/spout/node_modules/
 kinect-bridge/bin/

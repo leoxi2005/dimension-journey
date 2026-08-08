@@ -30,7 +30,11 @@ export function initialState(): AppState {
     // thì xin 60 vẫn chỉ ra ~30 (offscreen render raster bằng CPU).
     ndi: { running: true, fps: 30, scale: 100 },
     input: {
-      source: 'camera', deviceId: '', reach: 45, smooth: 0.3,
+      // reach 100: một nét vẽ phải chạy được từ tường 1 sang tường 5. Để 45% thì
+      // người xem chỉ vẽ được trong 4.6m giữa, còn 5.7m hai bên vĩnh viễn không
+      // với tới. Rung ở hai đầu — lý do cũ để hạ xuống 45% — giờ xử bằng cách
+      // cắt 9% mép khung camera (xem applyHand) chứ không bằng cách cắt tường.
+      source: 'camera', deviceId: '', reach: 100, smooth: 0.3,
       mirror: true, fistHold: 0.5, pinchThreshold: 0.55, kinectPort: 9010,
       // MÀU là mặc định: đó chính là 'dùng Kinect như một camera thường', và
       // MediaPipe chính xác nhất trên ảnh màu. IR chỉ để dành cho phòng tối om.
@@ -43,11 +47,11 @@ export function initialState(): AppState {
       // cao 1080 nhưng chỉ ngồi ở mép, không tranh chỗ với tác phẩm.
       hFov: 100, hud: true, hudScale: 1.0, bloom: true, bloomStrength: 0.85,
       starDensity: 100, strokeScale: 1.8,
-      // Tiếng vọng phủ HẾT bề ngang (cả 5 tường). Tay vẫn chỉ điều khiển vùng
-      // giữa theo `input.reach` — giữ nguyên độ chính xác khi vẽ — còn hình thì
-      // vang ra tới hai tường rìa. 6 tiếng vọng/nét là mức lấp đầy 10m mà chưa
-      // thành nhiễu; kéo về 0 là trở lại đúng hành vi cũ.
-      spread: 100, spreadCount: 6
+      // Tiếng vọng phủ HẾT bề ngang. Từ khi reach lên 100 thì chính nét vẽ đã
+      // chạy được sang các tường khác, nên tiếng vọng lùi về vai trò làm dày
+      // thêm chứ không còn là thứ DUY NHẤT lấp hai tường rìa — vì vậy hạ từ 6
+      // xuống 4/nét cho đỡ rối. Kéo về 0 là tắt hẳn.
+      spread: 100, spreadCount: 4
     }
   }
 }

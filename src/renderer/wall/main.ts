@@ -38,10 +38,12 @@ function applyHud(s: AppState): void {
   // rồi mới tràn sang tường 3. Giờ neo cứng vào mép trái tường 3.
   const w3 = wallSpan(2)
   hud.style.left = `${w3.x0 * 100}%`
-  // Ô đếm layer 5D vẫn theo vùng nội dung như cũ — nó nằm mép phải, không tranh
-  // chỗ với HUD, và người vận hành quen nhìn nó ở đó.
-  const zone = Math.max(20, Math.min(100, s.input.reach))
-  layersEl.style.right = `${(100 - zone) / 2}%`
+  // Ô đếm layer 5D neo vào TƯỜNG 4, cũng vì lý do mối nối như HUD. Trước đây nó
+  // bám theo (100-reach)/2; từ khi reach mặc định lên 100 để vẽ được hết bề
+  // ngang thì công thức đó cho ra 0%, tức đẩy ô đếm ra sát mép tường 5 — góc
+  // phòng, chỗ khó đọc nhất.
+  const w4 = wallSpan(3)
+  layersEl.style.right = `${(1 - (w4.x0 + w4.w)) * 100}%`
   // Chặn bề ngang để chữ KHÔNG tràn khỏi tường 3 kể cả khi kéo "cỡ chữ HUD" lên
   // 4×. Trừ hai lần PAD: #hud có padding-left 56px, chừa nốt 56px bên phải cho
   // cân. Cả padding lẫn max-width đều bị scale(k) nhân lên, nên phải chia lại cho
